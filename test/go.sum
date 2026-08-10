@@ -1,7 +1,7 @@
 github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 h1:UQHMgLO+TxOElx5B5HZ4hJQsoJ/PvUvKRhJHDQXO8P8=
 github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
-github.com/Demogorgon314/sing-openconnect v0.0.0-20260810115017-609fb9d2c9d0 h1:LoX9sYfCWz7zU8rV+yI8xQhYrtrHbkHJZ/jIMGnDotc=
-github.com/Demogorgon314/sing-openconnect v0.0.0-20260810115017-609fb9d2c9d0/go.mod h1:4AKZLVcvY3r54UaK2Gbnm7aN8pOwdLz+y4EP0QFZ5Eg=
+github.com/Demogorgon314/sing-openconnect v0.0.0-20260810140111-3283e5bdaf04 h1:7Hg2LEuNPoT1zrypNAGiBkgoZyLXbx7zbDPILTj/e/k=
+github.com/Demogorgon314/sing-openconnect v0.0.0-20260810140111-3283e5bdaf04/go.mod h1:4AKZLVcvY3r54UaK2Gbnm7aN8pOwdLz+y4EP0QFZ5Eg=
 github.com/Microsoft/go-winio v0.6.0 h1:slsWYD/zyx7lCXoZVlvQrj0hPTM1HI4+v1sIda2yDvg=
 github.com/Microsoft/go-winio v0.6.0/go.mod h1:cTAf44im0RAYeL23bpB+fzCyDH2MJiz2BO69KH/soAE=
 github.com/RyuaNerin/go-krypto v1.3.0 h1:smavTzSMAx8iuVlGb4pEwl9MD2qicqMzuXR2QWp2/Pg=
