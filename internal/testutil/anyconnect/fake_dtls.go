@@ -48,6 +48,11 @@ func (g *Gateway) DTLSInjectedResumptionObserved() bool {
 	return g != nil && g.dtlsResumeObserved.Load()
 }
 
+// ModernDTLSPSKOffered reports whether the CSTP client advertised modern PSK negotiation.
+func (g *Gateway) ModernDTLSPSKOffered() bool {
+	return g != nil && g.modernDTLSPSKOffered.Load()
+}
+
 func (g *Gateway) dtlsPSK([]byte) ([]byte, error) {
 	g.pskLock.RLock()
 	defer g.pskLock.RUnlock()
