@@ -1418,6 +1418,7 @@ proxies: # socks5
     # token-mode: totp # totp or hotp; HOTP requires a persistent counter provider and is not accepted from YAML alone
     # token-secret: ""
     # dtls-mode: auto # off, auto, or require; auto falls back to CSTP
+    # dtls-key-exchange: auto # auto offers modern PSK first; resumption prefers AES-GCM injected session resumption
     # legacy-dtls: false # enables Cisco DTLS 0.9 MD5/SHA-1/AES-CBC only when explicitly required
     # compression: stateless # off, stateless, or all
     # ipv6: false

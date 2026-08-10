@@ -11,13 +11,15 @@ const (
 	TokenModeTOTP = "totp"
 	TokenModeHOTP = "hotp"
 
-	CompressionOff       = "off"
-	CompressionStateless = "stateless"
-	CompressionAll       = "all"
-	DTLSModeOff          = "off"
-	DTLSModeAuto         = "auto"
-	DTLSModeRequire      = "require"
-	MaximumQueueLength   = 4096
+	CompressionOff            = "off"
+	CompressionStateless      = "stateless"
+	CompressionAll            = "all"
+	DTLSModeOff               = "off"
+	DTLSModeAuto              = "auto"
+	DTLSModeRequire           = "require"
+	DTLSKeyExchangeAuto       = "auto"
+	DTLSKeyExchangeResumption = "resumption"
+	MaximumQueueLength        = 4096
 )
 
 // TokenConfig configures a software OATH token. UpdateCounter persists the
@@ -58,6 +60,7 @@ type Config struct {
 	IPv6                 bool
 	Compression          string
 	DTLSMode             string
+	DTLSKeyExchange      string
 	LegacyDTLS           bool
 	DPDInterval          time.Duration
 	ReconnectTimeout     time.Duration
@@ -140,6 +143,11 @@ func (c Config) validate(hasAuthProvider bool) error {
 	case "", DTLSModeOff, DTLSModeAuto, DTLSModeRequire:
 	default:
 		return invalidConfig("DTLS mode must be off, auto, or require")
+	}
+	switch c.DTLSKeyExchange {
+	case "", DTLSKeyExchangeAuto, DTLSKeyExchangeResumption:
+	default:
+		return invalidConfig("DTLS key exchange must be auto or resumption")
 	}
 	if c.LegacyDTLS && c.DTLSMode == DTLSModeOff {
 		return invalidConfig("legacy DTLS requires DTLS mode auto or require")

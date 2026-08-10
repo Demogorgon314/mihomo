@@ -21,6 +21,12 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
   prevents the tunnel's private resolver from recursively resolving itself.
 - `dtls-mode: auto` prefers DTLS and falls back to CSTP. `require` fails closed
   if DTLS becomes unavailable; `off` uses CSTP only.
+- `dtls-key-exchange: auto` preserves the broadest gateway compatibility and
+  lets a PSK-capable server select modern PSK negotiation. `resumption` omits
+  that offer and requests injected session resumption, which can substantially
+  reduce CPU use on AES-accelerated systems. Gateways without that mechanism
+  fall back according to `dtls-mode`; validate this option against the target
+  gateway before deployment.
 - `legacy-dtls: true` is an explicit opt-in to Cisco DTLS 0.9 and its deprecated
   MD5/SHA-1/AES-CBC cryptography. It is never enabled by negotiation alone.
 - YAML supports a pre-authenticated cookie, username/password, authgroup,
