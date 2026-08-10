@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"time"
 )
 
 const (
@@ -24,6 +25,7 @@ type CSTPFaults struct {
 	RejectStatus        int
 	ResponseChunkSize   int
 	MalformedDataHeader bool
+	ResponseDelay       time.Duration
 }
 
 // AuthenticationScenario controls the deterministic XMLPOST authentication
@@ -93,6 +95,9 @@ func (s Scenario) Validate() error {
 	}
 	if s.CSTP.ResponseChunkSize < 0 {
 		validationErrors = append(validationErrors, errors.New("CSTP response chunk size cannot be negative"))
+	}
+	if s.CSTP.ResponseDelay < 0 {
+		validationErrors = append(validationErrors, errors.New("CSTP response delay cannot be negative"))
 	}
 	if s.Authentication.Enabled {
 		if s.Authentication.Username == "" || s.Authentication.Password == "" {

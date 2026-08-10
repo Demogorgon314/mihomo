@@ -54,6 +54,7 @@ const (
 	Tailscale
 	ZeroTier
 	GostRelay
+	AnyConnect
 )
 
 const (
@@ -239,6 +240,8 @@ func (at AdapterType) String() string {
 		return "ZeroTier"
 	case GostRelay:
 		return "GostRelay"
+	case AnyConnect:
+		return "AnyConnect"
 	case Relay:
 		return "Relay"
 	case Selector:
