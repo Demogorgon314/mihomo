@@ -195,3 +195,35 @@ func TestAnyConnectNetworkConfigRejectsInvalidMTUAndAddress(t *testing.T) {
 		t.Fatal("packet address-family validation rejected IPv6 or accepted IPv4")
 	}
 }
+
+func FuzzAnyConnectPacketBoundary(f *testing.F) {
+	validIPv4 := make([]byte, 20)
+	validIPv4[0] = 0x45
+	validIPv6 := make([]byte, 40)
+	validIPv6[0] = 0x60
+	f.Add(validIPv4, uint16(1400), false)
+	f.Add(validIPv6, uint16(1400), true)
+	f.Add([]byte{0x45}, uint16(576), false)
+	f.Fuzz(func(t *testing.T, packet []byte, mtuValue uint16, ipv6 bool) {
+		mtu := uint32(mtuValue)
+		address := netip.MustParsePrefix("192.0.2.2/24")
+		minimumMTU := uint32(576)
+		expectedVersion := byte(4)
+		minimumPacketSize := 20
+		if ipv6 {
+			address = netip.MustParsePrefix("2001:db8::2/64")
+			minimumMTU = 1280
+			expectedVersion = 6
+			minimumPacketSize = 40
+		}
+		if mtu < minimumMTU {
+			mtu = minimumMTU
+		}
+		configuration := ac.NetworkConfig{Addresses: []netip.Prefix{address}, MTU: mtu}
+		got := packetMatchesGeneration(packet, configuration)
+		want := len(packet) >= minimumPacketSize && uint32(len(packet)) <= mtu && packet[0]>>4 == expectedVersion
+		if got != want {
+			t.Fatalf("packet boundary mismatch: got %v, want %v (length=%d mtu=%d IPv6=%v)", got, want, len(packet), mtu, ipv6)
+		}
+	})
+}
