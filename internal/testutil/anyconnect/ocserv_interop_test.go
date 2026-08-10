@@ -418,6 +418,33 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 	if err := udpConnection.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if err := proxy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	authenticatedProxy, err := adapter.ParseProxy(map[string]any{
+		"name":        "ocserv-anyconnect-authenticated",
+		"type":        "anyconnect",
+		"server":      fakeGatewayServerName,
+		"port":        port,
+		"username":    ocservUsername,
+		"password":    ocservPassword,
+		"authgroup":   "users",
+		"ca":          string(certificatePEM),
+		"server-name": fakeGatewayServerName,
+		"dtls-mode":   "off",
+	}, adapter.WithDialerForAPI(&ocservOutboundDialer{tcpAddress: tcpAddress}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = authenticatedProxy.Close() }()
+	authenticatedConnection, err := authenticatedProxy.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: target, DstPort: 18080})
+	if err != nil {
+		logs, _ := dockerOutput(ctx, "logs", containerID)
+		t.Fatalf("authenticate ocserv outbound with username/password/authgroup: %v\n%s", err, logs)
+	}
+	if err := authenticatedConnection.Close(); err != nil {
+		t.Fatal(err)
+	}
 	for _, capability := range []Capability{CapabilityCookieCSTP, CapabilityPacketIPv4} {
 		if err := phase0CapabilityMatrix.Record(Evidence{
 			Capability: capability,
@@ -430,6 +457,17 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 		}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := phase0CapabilityMatrix.Record(Evidence{
+		Capability: CapabilityAuth,
+		Scenario:   "username-password-authgroup",
+		Driver:     DriverOutbound,
+		Gateway:    "ocserv-1.3.0-2",
+		Transport:  openconnect.TransportCSTP,
+		Address:    "ipv4",
+		Passed:     true,
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 

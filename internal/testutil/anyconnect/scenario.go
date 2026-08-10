@@ -32,12 +32,17 @@ type CSTPFaults struct {
 // exchange offered by the fake gateway. CookieUses limits successful CSTP
 // CONNECT requests for one issued cookie; zero means unlimited.
 type AuthenticationScenario struct {
-	Enabled           bool
-	Username          string
-	Password          string
-	Challenge         string
-	ChallengeResponse string
-	CookieUses        int
+	Enabled                    bool
+	Username                   string
+	Password                   string
+	AuthGroup                  string
+	Challenge                  string
+	ChallengeResponse          string
+	ChallengeResponses         []string
+	Browser                    bool
+	HostScan                   bool
+	ClientCertificateAuthority []byte
+	CookieUses                 int
 }
 
 // Scenario describes one deterministic fake AnyConnect gateway behavior.
@@ -103,8 +108,15 @@ func (s Scenario) Validate() error {
 		if s.Authentication.Username == "" || s.Authentication.Password == "" {
 			validationErrors = append(validationErrors, errors.New("authentication username and password are required"))
 		}
-		if (s.Authentication.Challenge == "") != (s.Authentication.ChallengeResponse == "") {
+		hasChallengeResponse := s.Authentication.ChallengeResponse != "" || len(s.Authentication.ChallengeResponses) > 0
+		if (s.Authentication.Challenge != "") != hasChallengeResponse {
 			validationErrors = append(validationErrors, errors.New("authentication challenge and response must be configured together"))
+		}
+		if s.Authentication.Browser && (s.Authentication.Challenge != "" || s.Authentication.HostScan) {
+			validationErrors = append(validationErrors, errors.New("browser authentication cannot be combined with challenge or host scan"))
+		}
+		if s.Authentication.HostScan && s.Authentication.Challenge != "" {
+			validationErrors = append(validationErrors, errors.New("host scan cannot be combined with challenge"))
 		}
 		if s.Authentication.CookieUses < 0 {
 			validationErrors = append(validationErrors, errors.New("authentication cookie uses cannot be negative"))

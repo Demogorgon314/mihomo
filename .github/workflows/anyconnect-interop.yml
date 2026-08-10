@@ -40,7 +40,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: Demogorgon314/sing-openconnect
-          ref: 609fb9d2c9d0cba8e60dc3b87decb8deb9df40c8
+          ref: 3283e5bdaf045f5f55edcaf321faaf1621ae8a55
           path: .anyconnect-upstream
 
       - name: Verify hermetic harness

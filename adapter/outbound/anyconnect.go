@@ -40,16 +40,30 @@ type AnyConnect struct {
 
 type AnyConnectOption struct {
 	BasicOption
-	Name             string `proxy:"name"`
-	Server           string `proxy:"server"`
-	Port             int    `proxy:"port"`
-	Cookie           string `proxy:"cookie"`
-	CA               string `proxy:"ca,omitempty"`
-	ServerName       string `proxy:"server-name,omitempty"`
-	PeerFingerprint  string `proxy:"peer-fingerprint,omitempty"`
-	HandshakeTimeout int    `proxy:"handshake-timeout,omitempty"`
-	MTU              int    `proxy:"mtu,omitempty"`
-	DTLSMode         string `proxy:"dtls-mode,omitempty"`
+	Name             string         `proxy:"name"`
+	Server           string         `proxy:"server"`
+	Port             int            `proxy:"port"`
+	Cookie           string         `proxy:"cookie,omitempty"`
+	Username         string         `proxy:"username,omitempty"`
+	Password         string         `proxy:"password,omitempty"`
+	AuthGroup        string         `proxy:"authgroup,omitempty"`
+	FormEntries      []ac.FormEntry `proxy:"form-entries,omitempty"`
+	CA               string         `proxy:"ca,omitempty"`
+	Cert             string         `proxy:"cert,omitempty"`
+	Key              string         `proxy:"key,omitempty"`
+	KeyPassword      string         `proxy:"key-password,omitempty"`
+	ServerName       string         `proxy:"server-name,omitempty"`
+	PeerFingerprint  string         `proxy:"peer-fingerprint,omitempty"`
+	SkipCertVerify   bool           `proxy:"skip-cert-verify,omitempty"`
+	TokenMode        string         `proxy:"token-mode,omitempty"`
+	TokenSecret      string         `proxy:"token-secret,omitempty"`
+	TokenCounter     uint64         `proxy:"token-counter,omitempty"`
+	HandshakeTimeout int            `proxy:"handshake-timeout,omitempty"`
+	MTU              int            `proxy:"mtu,omitempty"`
+	DTLSMode         string         `proxy:"dtls-mode,omitempty"`
+
+	AuthProvider       ac.AuthProvider                     `proxy:"-"`
+	TokenCounterUpdate func(context.Context, uint64) error `proxy:"-"`
 }
 
 func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
@@ -62,14 +76,8 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 	if option.Port < 1 || option.Port > 65535 {
 		return nil, errors.New("anyconnect port must be between 1 and 65535")
 	}
-	if option.Cookie == "" {
-		return nil, errors.New("anyconnect cookie is required")
-	}
 	if strings.ContainsAny(option.Cookie, "\x00\r\n") {
 		return nil, errors.New("anyconnect cookie contains an invalid character")
-	}
-	if option.CA != "" && option.PeerFingerprint != "" {
-		return nil, errors.New("anyconnect CA and peer fingerprint cannot both be configured")
 	}
 	if option.HandshakeTimeout < 0 {
 		return nil, errors.New("anyconnect handshake timeout must be non-negative")
@@ -81,6 +89,33 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 		return nil, fmt.Errorf("unsupported anyconnect DTLS mode %q; only off is available", option.DTLSMode)
 	}
 	address := net.JoinHostPort(option.Server, fmt.Sprint(option.Port))
+	config := ac.Config{
+		Server:               "https://" + address,
+		Cookie:               option.Cookie,
+		Username:             option.Username,
+		Password:             option.Password,
+		AuthGroup:            option.AuthGroup,
+		FormEntries:          option.FormEntries,
+		ServerName:           option.ServerName,
+		CertificateAuthority: []byte(option.CA),
+		ClientCertificate:    []byte(option.Cert),
+		ClientKey:            []byte(option.Key),
+		ClientKeyPassword:    option.KeyPassword,
+		PeerFingerprint:      option.PeerFingerprint,
+		SkipCertVerify:       option.SkipCertVerify,
+		MTU:                  uint32(option.MTU),
+	}
+	if option.TokenMode != "" || option.TokenSecret != "" || option.TokenCounter != 0 || option.TokenCounterUpdate != nil {
+		config.Token = &ac.TokenConfig{
+			Mode:          option.TokenMode,
+			Secret:        option.TokenSecret,
+			Counter:       option.TokenCounter,
+			UpdateCounter: option.TokenCounterUpdate,
+		}
+	}
+	if err := ac.ValidateConfig(config, option.AuthProvider); err != nil {
+		return nil, err
+	}
 	runCtx, runCancel := context.WithCancel(context.Background())
 	outbound := &AnyConnect{
 		Base: NewBase(BaseOption{
@@ -99,14 +134,7 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 		runCtx:    runCtx,
 		runCancel: runCancel,
 		closeDone: make(chan struct{}),
-		config: ac.Config{
-			Server:               "https://" + address,
-			Cookie:               option.Cookie,
-			ServerName:           option.ServerName,
-			CertificateAuthority: []byte(option.CA),
-			PeerFingerprint:      option.PeerFingerprint,
-			MTU:                  uint32(option.MTU),
-		},
+		config:    config,
 	}
 	outbound.dialer = option.NewDialer(outbound.DialOptions())
 	return outbound, nil
@@ -264,7 +292,7 @@ func (o *AnyConnect) start(starting chan struct{}) {
 	}
 	handshakeCtx, cancel := context.WithTimeout(o.runCtx, timeout)
 	defer cancel()
-	session, err := newAnyConnectSession(o.runCtx, handshakeCtx, o.config, o.dialer, o.name)
+	session, err := newAnyConnectSession(o.runCtx, handshakeCtx, o.config, o.dialer, o.option.AuthProvider, o.name)
 	o.access.Lock()
 	if err == nil && !o.closed {
 		o.session = session
