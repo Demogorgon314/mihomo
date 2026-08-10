@@ -31,6 +31,31 @@ func (generationTestClient) WritePacket([]byte) error { return nil }
 func (generationTestClient) ActiveTransport() string  { return "cstp" }
 func (generationTestClient) Close() error             { return nil }
 
+type packetSequenceTestClient struct {
+	packets chan []byte
+	err     error
+}
+
+func (c *packetSequenceTestClient) WaitReady(context.Context) (ac.NetworkConfig, error) {
+	return ac.NetworkConfig{}, nil
+}
+
+func (c *packetSequenceTestClient) ReadPacket(ctx context.Context) ([]byte, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case packet := <-c.packets:
+		if packet == nil {
+			return nil, c.err
+		}
+		return packet, nil
+	}
+}
+
+func (*packetSequenceTestClient) WritePacket([]byte) error { return nil }
+func (*packetSequenceTestClient) ActiveTransport() string  { return "dtls" }
+func (*packetSequenceTestClient) Close() error             { return nil }
+
 func TestAnyConnectNetworkGenerationReplacement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -95,6 +120,48 @@ func TestAnyConnectNetworkGenerationReplacement(t *testing.T) {
 		t.Fatal("flow from the replaced stack generation remained usable")
 	}
 	_ = flow.Close()
+}
+
+func TestAnyConnectIgnoresUnconfiguredAddressFamily(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	readErr := errors.New("packet sequence complete")
+	client := &packetSequenceTestClient{packets: make(chan []byte, 2), err: readErr}
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	session := &anyConnectSession{
+		client:          client,
+		ctx:             sessionCtx,
+		cancel:          sessionCancel,
+		name:            "address-family-test",
+		resolverFactory: func(ac.NetworkConfig) (resolver.Resolver, error) { return nil, nil },
+		initialDone:     make(chan struct{}),
+		done:            make(chan struct{}),
+	}
+	session.wait.Add(1)
+	go session.runTunnelToStack()
+	go func() {
+		session.wait.Wait()
+		close(session.done)
+	}()
+	t.Cleanup(func() { _ = session.close() })
+
+	configuration := ac.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")}, MTU: 1400}
+	if err := session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigInitial, Config: configuration}); err != nil {
+		t.Fatal(err)
+	}
+	unexpectedIPv6 := make([]byte, 40)
+	unexpectedIPv6[0] = 0x60
+	client.packets <- unexpectedIPv6
+	client.packets <- nil
+
+	select {
+	case <-session.done:
+	case <-ctx.Done():
+		t.Fatalf("session did not finish packet sequence: %v", ctx.Err())
+	}
+	if err := session.err(); !errors.Is(err, readErr) {
+		t.Fatalf("unconfigured address family stopped the tunnel: %v", err)
+	}
 }
 
 func TestAnyConnectNetworkConfigRejectsInvalidMTUAndAddress(t *testing.T) {
