@@ -28,6 +28,7 @@ func (generationTestClient) ReadPacket(ctx context.Context) ([]byte, error) {
 }
 
 func (generationTestClient) WritePacket([]byte) error { return nil }
+func (generationTestClient) ActiveTransport() string  { return "cstp" }
 func (generationTestClient) Close() error             { return nil }
 
 func TestAnyConnectNetworkGenerationReplacement(t *testing.T) {

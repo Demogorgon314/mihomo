@@ -157,6 +157,7 @@ func TestClientRejectsInvalidConfigWithoutLeakingCookie(t *testing.T) {
 		{name: "conflicting TLS trust", config: Config{Server: "https://vpn.example", Cookie: secret, CertificateAuthority: []byte("test CA"), PeerFingerprint: "sha256:0000"}},
 		{name: "invalid server name", config: Config{Server: "https://vpn.example", Cookie: secret, ServerName: "bad\nname"}},
 		{name: "unbounded packet queue", config: Config{Server: "https://vpn.example", Cookie: secret, QueueLength: MaximumQueueLength + 1}},
+		{name: "invalid DTLS mode", config: Config{Server: "https://vpn.example", Cookie: secret, DTLSMode: "invalid"}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			_, err := NewClient(context.Background(), testCase.config, new(recordingDialer), nil)

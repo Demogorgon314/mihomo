@@ -73,10 +73,12 @@ func TestClientPublishesCallerOwnedNetworkConfiguration(t *testing.T) {
 		t.Fatalf("unexpected network event: %#v", event)
 	}
 	var publicEvent Event
-	select {
-	case publicEvent = <-client.Events():
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
+	for publicEvent.Type != EventNetworkConfig {
+		select {
+		case publicEvent = <-client.Events():
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
 	}
 	if publicEvent.Type != EventNetworkConfig || publicEvent.NetworkConfig == nil || publicEvent.NetworkConfig.Banner == scenario.Cookie || publicEvent.NetworkConfig.Banner != "[redacted]" {
 		t.Fatalf("public network event exposed a configured secret: %#v", publicEvent)
