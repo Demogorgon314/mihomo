@@ -32,6 +32,7 @@ func TestScenarioValidate(t *testing.T) {
 		{name: "status low", mutate: func(s *Scenario) { s.CSTP.RejectStatus = 399 }, message: "status"},
 		{name: "status high", mutate: func(s *Scenario) { s.CSTP.RejectStatus = 600 }, message: "status"},
 		{name: "chunk size", mutate: func(s *Scenario) { s.CSTP.ResponseChunkSize = -1 }, message: "chunk"},
+		{name: "legacy DTLS fault", mutate: func(s *Scenario) { s.LegacyDTLS = true; s.LegacyDTLSFault = "typo" }, message: "legacy DTLS fault"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

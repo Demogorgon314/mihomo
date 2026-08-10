@@ -15,6 +15,7 @@ import (
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/dns"
+	"github.com/metacubex/mihomo/log"
 	ac "github.com/metacubex/mihomo/transport/anyconnect"
 
 	M "github.com/metacubex/sing/common/metadata"
@@ -72,6 +73,7 @@ type AnyConnectOption struct {
 	RemoteDnsResolve bool           `proxy:"remote-dns-resolve,omitempty"`
 	Dns              []string       `proxy:"dns,omitempty"`
 	DTLSMode         string         `proxy:"dtls-mode,omitempty"`
+	LegacyDTLS       bool           `proxy:"legacy-dtls,omitempty"`
 
 	AuthProvider       ac.AuthProvider                     `proxy:"-"`
 	TokenCounterUpdate func(context.Context, uint64) error `proxy:"-"`
@@ -117,6 +119,9 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 	if option.DTLSMode != "" && option.DTLSMode != ac.DTLSModeOff && option.DTLSMode != ac.DTLSModeAuto && option.DTLSMode != ac.DTLSModeRequire {
 		return nil, fmt.Errorf("unsupported anyconnect DTLS mode %q; expected off, auto, or require", option.DTLSMode)
 	}
+	if option.LegacyDTLS && option.DTLSMode == ac.DTLSModeOff {
+		return nil, errors.New("anyconnect legacy DTLS requires DTLS mode auto or require")
+	}
 	address := net.JoinHostPort(option.Server, fmt.Sprint(option.Port))
 	config := ac.Config{
 		Server:               "https://" + address,
@@ -140,6 +145,7 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 		DPDInterval:          time.Duration(option.DPDInterval) * time.Second,
 		ReconnectTimeout:     time.Duration(option.ReconnectTimeout) * time.Second,
 		DTLSMode:             option.DTLSMode,
+		LegacyDTLS:           option.LegacyDTLS,
 	}
 	if option.TokenMode != "" || option.TokenSecret != "" || option.TokenCounter != 0 || option.TokenCounterUpdate != nil {
 		config.Token = &ac.TokenConfig{
@@ -151,6 +157,9 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 	}
 	if err := ac.ValidateConfig(config, option.AuthProvider); err != nil {
 		return nil, err
+	}
+	if option.LegacyDTLS {
+		log.Warnln("[AnyConnect](%s) legacy DTLS 0.9 enables deprecated MD5/SHA-1 handshake and AES-CBC record protection", option.Name)
 	}
 	runCtx, runCancel := context.WithCancel(context.Background())
 	outbound := &AnyConnect{
