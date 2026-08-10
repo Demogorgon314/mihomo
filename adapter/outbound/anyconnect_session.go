@@ -316,9 +316,12 @@ func (s *anyConnectSession) runTunnelToStack() {
 			s.stop(net.ErrClosed)
 			return
 		}
-		if !packetMatchesGeneration(packet, configuration) {
-			s.stop(errors.New("AnyConnect server sent a packet for an unconfigured address family"))
+		if !validAnyConnectPacket(packet, configuration.MTU) {
+			s.stop(errors.New("AnyConnect server sent an invalid network packet"))
 			return
+		}
+		if !packetMatchesGeneration(packet, configuration) {
+			continue
 		}
 		if _, err := generation.device.Write([][]byte{packet}, 0); err != nil {
 			if !s.isCurrent(generation) {
@@ -334,19 +337,30 @@ func (s *anyConnectSession) runTunnelToStack() {
 }
 
 func packetMatchesGeneration(packet []byte, configuration ac.NetworkConfig) bool {
-	if len(packet) == 0 || uint32(len(packet)) > configuration.MTU {
+	if !validAnyConnectPacket(packet, configuration.MTU) {
 		return false
 	}
 	version := packet[0] >> 4
-	if version == 4 && len(packet) < 20 || version == 6 && len(packet) < 40 {
-		return false
-	}
 	for _, prefix := range configuration.Addresses {
 		if version == 4 && prefix.Addr().Is4() || version == 6 && prefix.Addr().Is6() {
 			return true
 		}
 	}
 	return false
+}
+
+func validAnyConnectPacket(packet []byte, mtu uint32) bool {
+	if len(packet) == 0 || uint32(len(packet)) > mtu {
+		return false
+	}
+	switch packet[0] >> 4 {
+	case 4:
+		return len(packet) >= 20
+	case 6:
+		return len(packet) >= 40
+	default:
+		return false
+	}
 }
 
 func (s *anyConnectSession) currentGeneration() (*anyConnectGeneration, ac.NetworkConfig) {
