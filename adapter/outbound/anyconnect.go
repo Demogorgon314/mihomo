@@ -11,8 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/dns"
 	ac "github.com/metacubex/mihomo/transport/anyconnect"
 
 	M "github.com/metacubex/sing/common/metadata"
@@ -24,6 +26,7 @@ type AnyConnect struct {
 	*Base
 	option AnyConnectOption
 	config ac.Config
+	dns    []dns.NameServer
 
 	runCtx    context.Context
 	runCancel context.CancelFunc
@@ -60,6 +63,14 @@ type AnyConnectOption struct {
 	TokenCounter     uint64         `proxy:"token-counter,omitempty"`
 	HandshakeTimeout int            `proxy:"handshake-timeout,omitempty"`
 	MTU              int            `proxy:"mtu,omitempty"`
+	BaseMTU          int            `proxy:"base-mtu,omitempty"`
+	IPv6             bool           `proxy:"ipv6,omitempty"`
+	Compression      string         `proxy:"compression,omitempty"`
+	QueueLength      uint32         `proxy:"queue-length,omitempty"`
+	DPDInterval      int            `proxy:"dpd-interval,omitempty"`
+	ReconnectTimeout int            `proxy:"reconnect-timeout,omitempty"`
+	RemoteDnsResolve bool           `proxy:"remote-dns-resolve,omitempty"`
+	Dns              []string       `proxy:"dns,omitempty"`
 	DTLSMode         string         `proxy:"dtls-mode,omitempty"`
 
 	AuthProvider       ac.AuthProvider                     `proxy:"-"`
@@ -85,6 +96,24 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 	if option.MTU != 0 && (option.MTU < 576 || option.MTU > 65535) {
 		return nil, errors.New("anyconnect MTU must be between 576 and 65535")
 	}
+	if option.IPv6 && option.MTU != 0 && option.MTU < 1280 {
+		return nil, errors.New("anyconnect IPv6 MTU must be at least 1280")
+	}
+	if option.BaseMTU != 0 && (option.BaseMTU < 576 || option.BaseMTU > 65535) {
+		return nil, errors.New("anyconnect base MTU must be between 576 and 65535")
+	}
+	if option.DPDInterval < 0 {
+		return nil, errors.New("anyconnect DPD interval must be non-negative")
+	}
+	if option.ReconnectTimeout < 0 {
+		return nil, errors.New("anyconnect reconnect timeout must be non-negative")
+	}
+	if option.QueueLength > ac.MaximumQueueLength {
+		return nil, fmt.Errorf("anyconnect packet queue length must not exceed %d", ac.MaximumQueueLength)
+	}
+	if len(option.Dns) > 0 && !option.RemoteDnsResolve {
+		return nil, errors.New("anyconnect DNS override requires remote-dns-resolve")
+	}
 	if option.DTLSMode != "" && option.DTLSMode != "off" {
 		return nil, fmt.Errorf("unsupported anyconnect DTLS mode %q; only off is available", option.DTLSMode)
 	}
@@ -104,6 +133,12 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 		PeerFingerprint:      option.PeerFingerprint,
 		SkipCertVerify:       option.SkipCertVerify,
 		MTU:                  uint32(option.MTU),
+		BaseMTU:              uint32(option.BaseMTU),
+		IPv6:                 option.IPv6,
+		Compression:          option.Compression,
+		QueueLength:          option.QueueLength,
+		DPDInterval:          time.Duration(option.DPDInterval) * time.Second,
+		ReconnectTimeout:     time.Duration(option.ReconnectTimeout) * time.Second,
 	}
 	if option.TokenMode != "" || option.TokenSecret != "" || option.TokenCounter != 0 || option.TokenCounterUpdate != nil {
 		config.Token = &ac.TokenConfig{
@@ -136,8 +171,28 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 		closeDone: make(chan struct{}),
 		config:    config,
 	}
+	if option.RemoteDnsResolve && len(option.Dns) > 0 {
+		parsedDNS, err := parseAnyConnectNameServers(option.Dns)
+		if err != nil {
+			runCancel()
+			return nil, err
+		}
+		outbound.dns = parsedDNS
+	}
 	outbound.dialer = option.NewDialer(outbound.DialOptions())
 	return outbound, nil
+}
+
+func parseAnyConnectNameServers(servers []string) ([]dns.NameServer, error) {
+	result := make([]dns.NameServer, 0, len(servers))
+	for _, server := range servers {
+		address, err := netip.ParseAddr(server)
+		if err != nil {
+			return nil, fmt.Errorf("anyconnect DNS override must be an IP address: %q", server)
+		}
+		result = append(result, dns.NameServer{Addr: net.JoinHostPort(address.String(), "53")})
+	}
+	return result, nil
 }
 
 func validateAnyConnectServer(server string) error {
@@ -162,14 +217,21 @@ func (o *AnyConnect) DialContext(ctx context.Context, metadata *C.Metadata) (C.C
 	if err != nil {
 		return nil, err
 	}
-	if !metadata.Resolved() {
-		ip, resolveErr := resolveIPWithResolver(ctx, metadata.Host, o.prefer, resolver.DefaultResolver)
-		if resolveErr != nil {
-			return nil, fmt.Errorf("can't resolve ip: %w", resolveErr)
-		}
-		metadata.DstIP = ip
+	device, remoteResolver, err := session.currentDevice()
+	if err != nil {
+		return nil, err
 	}
-	connection, err := session.device.DialContext(ctx, "tcp", M.SocksaddrFrom(metadata.DstIP, metadata.DstPort).Unwrap())
+	var connection net.Conn
+	if !metadata.Resolved() || remoteResolver != nil {
+		if remoteResolver == nil {
+			remoteResolver = resolver.DefaultResolver
+		}
+		options := o.DialOptions()
+		options = append(options, dialer.WithResolver(remoteResolver), dialer.WithNetDialer(wgNetDialer{tunDevice: device}))
+		connection, err = dialer.NewDialer(options...).DialContext(ctx, "tcp", metadata.RemoteAddress())
+	} else {
+		connection, err = device.DialContext(ctx, "tcp", M.SocksaddrFrom(metadata.DstIP, metadata.DstPort).Unwrap())
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -184,10 +246,14 @@ func (o *AnyConnect) ListenPacketContext(ctx context.Context, metadata *C.Metada
 	if err != nil {
 		return nil, err
 	}
-	if err := o.resolveUDP(ctx, metadata); err != nil {
+	device, remoteResolver, err := session.currentDevice()
+	if err != nil {
 		return nil, err
 	}
-	packetConn, err := session.device.ListenPacket(ctx, M.SocksaddrFrom(metadata.DstIP, metadata.DstPort).Unwrap())
+	if err := o.resolveUDP(ctx, metadata, remoteResolver); err != nil {
+		return nil, err
+	}
+	packetConn, err := device.ListenPacket(ctx, M.SocksaddrFrom(metadata.DstIP, metadata.DstPort).Unwrap())
 	if err != nil {
 		return nil, err
 	}
@@ -198,21 +264,57 @@ func (o *AnyConnect) ListenPacketContext(ctx context.Context, metadata *C.Metada
 }
 
 func (o *AnyConnect) ResolveUDP(ctx context.Context, metadata *C.Metadata) error {
-	if _, err := o.run(ctx); err != nil {
+	session, err := o.run(ctx)
+	if err != nil {
 		return err
 	}
-	return o.resolveUDP(ctx, metadata)
+	_, remoteResolver, err := session.currentDevice()
+	if err != nil {
+		return err
+	}
+	return o.resolveUDP(ctx, metadata, remoteResolver)
 }
 
-func (o *AnyConnect) resolveUDP(ctx context.Context, metadata *C.Metadata) error {
-	if !metadata.Resolved() && metadata.Host != "" {
-		ip, err := resolveIPWithResolver(ctx, metadata.Host, o.prefer, resolver.DefaultResolver)
+func (o *AnyConnect) resolveUDP(ctx context.Context, metadata *C.Metadata, remoteResolver resolver.Resolver) error {
+	if (!metadata.Resolved() || remoteResolver != nil) && metadata.Host != "" {
+		if remoteResolver == nil {
+			remoteResolver = resolver.DefaultResolver
+		}
+		ip, err := resolveIPWithResolver(ctx, metadata.Host, o.prefer, remoteResolver)
 		if err != nil {
 			return fmt.Errorf("can't resolve ip: %w", err)
 		}
 		metadata.DstIP = ip
 	}
 	return nil
+}
+
+func (o *AnyConnect) resolverForConfig(configuration ac.NetworkConfig) (resolver.Resolver, error) {
+	if !o.option.RemoteDnsResolve {
+		return nil, nil
+	}
+	nameservers := append([]dns.NameServer(nil), o.dns...)
+	if len(nameservers) == 0 {
+		for _, address := range configuration.DNS {
+			nameservers = append(nameservers, dns.NameServer{Addr: net.JoinHostPort(address.String(), "53")})
+		}
+	}
+	if len(nameservers) == 0 {
+		return nil, errors.New("AnyConnect server did not provide a DNS server")
+	}
+	for index := range nameservers {
+		nameservers[index].ProxyAdapter = o
+	}
+	return dns.NewResolver(dns.Config{Main: nameservers, IPv6: networkConfigHasIPv6(configuration)}).Resolver, nil
+}
+
+func networkConfigHasIPv6(configuration ac.NetworkConfig) bool {
+	for _, prefix := range configuration.Addresses {
+		if prefix.Addr().Is6() {
+			return true
+		}
+	}
+	return false
 }
 
 func (o *AnyConnect) ProxyInfo() C.ProxyInfo {
@@ -292,7 +394,7 @@ func (o *AnyConnect) start(starting chan struct{}) {
 	}
 	handshakeCtx, cancel := context.WithTimeout(o.runCtx, timeout)
 	defer cancel()
-	session, err := newAnyConnectSession(o.runCtx, handshakeCtx, o.config, o.dialer, o.option.AuthProvider, o.name)
+	session, err := newAnyConnectSession(o.runCtx, handshakeCtx, o.config, o.dialer, o.option.AuthProvider, o.resolverForConfig, o.name)
 	o.access.Lock()
 	if err == nil && !o.closed {
 		o.session = session

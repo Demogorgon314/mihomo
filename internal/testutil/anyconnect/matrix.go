@@ -15,13 +15,19 @@ import (
 type Capability string
 
 const (
-	CapabilityCookieCSTP Capability = "cookie-cstp"
-	CapabilityPacketIPv4 Capability = "packet-ipv4"
-	CapabilityModernDTLS Capability = "modern-dtls"
-	CapabilityFallback   Capability = "cstp-fallback"
-	CapabilityTLSVerify  Capability = "tls-verification"
-	CapabilityFraming    Capability = "cstp-framing-rejection"
-	CapabilityAuth       Capability = "xmlpost-authentication"
+	CapabilityCookieCSTP  Capability = "cookie-cstp"
+	CapabilityPacketIPv4  Capability = "packet-ipv4"
+	CapabilityPacketIPv6  Capability = "packet-ipv6"
+	CapabilityModernDTLS  Capability = "modern-dtls"
+	CapabilityFallback    Capability = "cstp-fallback"
+	CapabilityTLSVerify   Capability = "tls-verification"
+	CapabilityFraming     Capability = "cstp-framing-rejection"
+	CapabilityAuth        Capability = "xmlpost-authentication"
+	CapabilityPrivateDNS  Capability = "private-dns"
+	CapabilityReconnect   Capability = "cstp-reconnect"
+	CapabilityDPD         Capability = "dead-peer-detection"
+	CapabilityRekey       Capability = "cstp-rekey"
+	CapabilityCompression Capability = "compression"
 )
 
 // Driver identifies the client layer exercised by evidence.
