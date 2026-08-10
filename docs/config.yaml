@@ -1392,7 +1392,7 @@ proxies: # socks5
     # routing-mark: 6666
     # ip-version: ipv4-prefer
 
-  # anyconnect (experimental until the selected capabilities pass a real Cisco gateway test)
+  # anyconnect (experimental until the selected capabilities pass a real Cisco gateway test; operations: docs/anyconnect.md)
   - name: "anyconnect"
     type: anyconnect
     server: vpn.example.com
