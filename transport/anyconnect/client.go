@@ -15,6 +15,12 @@ import (
 	openconnect "github.com/sagernet/sing-openconnect"
 )
 
+const (
+	modernDTLSCipherSuites   = "PSK-NEGOTIATE:OC2-DTLS1_2-CHACHA20-POLY1305:OC-DTLS1_2-AES256-GCM:OC-DTLS1_2-AES128-GCM"
+	legacyDTLSCipherSuites   = modernDTLSCipherSuites + ":AES256-SHA:AES128-SHA"
+	modernDTLS12CipherSuites = "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-GCM-SHA256"
+)
+
 // NetworkConfig is a caller-owned snapshot of the negotiated tunnel settings.
 type NetworkConfig struct {
 	RemoteAddress            netip.Addr
@@ -164,6 +170,10 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	if config.Compression == CompressionAll {
 		compressionMode = openconnect.CompressionModeAll
 	}
+	dtlsCipherSuites := modernDTLSCipherSuites
+	if config.LegacyDTLS {
+		dtlsCipherSuites = legacyDTLSCipherSuites
+	}
 	core, err := openconnect.NewClient(openconnect.ClientOptions{
 		Context:             ctx,
 		Server:              config.Server,
@@ -174,6 +184,9 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		Token:               tokenOptions,
 		NoUDP:               normalizeDTLSMode(config.DTLSMode) == DTLSModeOff,
 		DTLSRequired:        normalizeDTLSMode(config.DTLSMode) == DTLSModeRequire,
+		LegacyDTLSDisabled:  !config.LegacyDTLS,
+		DTLSCipherSuites:    dtlsCipherSuites,
+		DTLS12CipherSuites:  modernDTLS12CipherSuites,
 		CompressionDisabled: compressionDisabled,
 		CompressionMode:     compressionMode,
 		IPv6Disabled:        !config.IPv6,

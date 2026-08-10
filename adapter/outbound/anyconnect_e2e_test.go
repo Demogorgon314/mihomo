@@ -325,12 +325,96 @@ func TestAnyConnectModernDTLSOutbound(t *testing.T) {
 	})
 }
 
+func TestAnyConnectLegacyDTLSOutbound(t *testing.T) {
+	ctx, outbound, session, gateway, recorder, peerAddress := startLegacyDTLSOutbound(t, ac.DTLSModeAuto)
+	waitAnyConnectTransport(t, ctx, session, "dtls")
+	connection, err := outbound.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: peerAddress, DstPort: testAnyConnectTCPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("legacy DTLS TCP echo")
+	if _, err := connection.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	reply := make([]byte, len(payload))
+	if _, err := io.ReadFull(connection, reply); err != nil {
+		t.Fatal(err)
+	}
+	_ = connection.Close()
+	packetConn, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packetConn.Close()
+	destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
+	exchangeAnyConnectUDP(t, ctx, packetConn, destination, "legacy DTLS UDP echo")
+	if countRecords(recorder.Records(), "legacy-dtls-data") == 0 {
+		t.Fatal("outbound traffic did not traverse legacy DTLS")
+	}
+	beforeFallback := countRecords(recorder.Records(), "cstp-data")
+	gateway.SetDTLSBlackhole(true)
+	waitAnyConnectTransport(t, ctx, session, "cstp")
+	exchangeAnyConnectUDP(t, ctx, packetConn, destination, "legacy CSTP fallback UDP echo")
+	if countRecords(recorder.Records(), "cstp-data") <= beforeFallback {
+		t.Fatal("legacy DTLS failure did not preserve the UDP flow over CSTP")
+	}
+	gateway.SetDTLSBlackhole(false)
+	waitAnyConnectTransport(t, ctx, session, "dtls")
+	exchangeAnyConnectUDP(t, ctx, packetConn, destination, "legacy DTLS restored UDP echo")
+	writeAnyConnectEvidenceForTransport(t, "legacy-dtls", "legacy-dtls-opt-in", []testanyconnect.Capability{testanyconnect.CapabilityLegacyDTLS}, "dtls")
+	writeAnyConnectEvidenceForTransport(t, "legacy-dtls-fallback", "legacy-dtls-auto-fallback", []testanyconnect.Capability{testanyconnect.CapabilityFallback}, "cstp")
+}
+
+func TestAnyConnectLegacyDTLSRekey(t *testing.T) {
+	ctx, outbound, session, _, recorder, peerAddress := startLegacyDTLSRekeyOutbound(t, ac.DTLSModeAuto)
+	waitAnyConnectTransport(t, ctx, session, "dtls")
+	packetConn, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packetConn.Close()
+	destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
+	exchangeAnyConnectUDP(t, ctx, packetConn, destination, "legacy DTLS before rekey")
+	handshakes := countRecords(recorder.Records(), "legacy-dtls-handshake")
+	for countRecords(recorder.Records(), "cstp-connect") < 2 || countRecords(recorder.Records(), "legacy-dtls-handshake") <= handshakes {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	waitAnyConnectTransport(t, ctx, session, "dtls")
+	exchangeAnyConnectUDP(t, ctx, packetConn, destination, "legacy DTLS rekey UDP echo")
+	writeAnyConnectEvidenceForTransport(t, "legacy-dtls-rekey", "legacy-dtls-rekey", []testanyconnect.Capability{testanyconnect.CapabilityRekey}, "dtls")
+}
+
 func startModernDTLSOutbound(t *testing.T, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+	return startDTLSOutbound(t, mode, false, 0)
+}
+
+func startLegacyDTLSOutbound(t *testing.T, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+	return startDTLSOutbound(t, mode, true, 0)
+}
+
+func startLegacyDTLSRekeyOutbound(t *testing.T, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+	return startDTLSOutbound(t, mode, true, 5*time.Second)
+}
+
+func startDTLSOutbound(t *testing.T, mode string, legacy bool, rekeyInterval time.Duration) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	timeout := 30 * time.Second
+	if legacy {
+		timeout = 60 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	t.Cleanup(cancel)
 	scenario := testanyconnect.BasicCSTPScenario()
-	scenario.ModernDTLS = true
+	if legacy {
+		scenario.LegacyDTLS = true
+	} else {
+		scenario.ModernDTLS = true
+	}
+	scenario.CSTP.RekeyInterval = rekeyInterval
 	peerAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
@@ -345,6 +429,7 @@ func startModernDTLSOutbound(t *testing.T, mode string) (context.Context, *AnyCo
 	t.Cleanup(func() { _ = gateway.Close() })
 	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
 		option.DTLSMode = mode
+		option.LegacyDTLS = legacy
 		option.DPDInterval = 2
 	})
 	t.Cleanup(func() { _ = outbound.Close() })
@@ -589,7 +674,8 @@ func TestAnyConnectReconnectTimeoutIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	recorder := testanyconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -659,8 +745,17 @@ func TestAnyConnectCloseStopsActiveReconnect(t *testing.T) {
 }
 
 func TestAnyConnectCSTPSoak(t *testing.T) {
+	runAnyConnectSoak(t, false)
+}
+
+func TestAnyConnectLegacyDTLSSoak(t *testing.T) {
+	runAnyConnectSoak(t, true)
+}
+
+func runAnyConnectSoak(t *testing.T, legacyDTLS bool) {
+	t.Helper()
 	if os.Getenv("MIHOMO_ANYCONNECT_SOAK") != "1" {
-		t.Skip("set MIHOMO_ANYCONNECT_SOAK=1 to run the accelerated CSTP soak")
+		t.Skip("set MIHOMO_ANYCONNECT_SOAK=1 to run the accelerated AnyConnect soak")
 	}
 	const soakDuration = 5 * time.Minute
 	baselineGoroutines := runtime.NumGoroutine()
@@ -668,12 +763,14 @@ func TestAnyConnectCSTPSoak(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), soakDuration+30*time.Second)
 	defer cancel()
 	scenario := testanyconnect.BasicCSTPScenario()
+	scenario.LegacyDTLS = legacyDTLS
 	peerAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	recorder := testanyconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		_ = peer.Close()
 		t.Fatal(err)
@@ -683,6 +780,11 @@ func TestAnyConnectCSTPSoak(t *testing.T) {
 		option.ReconnectTimeout = 5
 		option.DPDInterval = 30
 		option.QueueLength = 64
+		option.LegacyDTLS = legacyDTLS
+		if legacyDTLS {
+			option.DTLSMode = ac.DTLSModeAuto
+			option.DPDInterval = 2
+		}
 	})
 	t.Cleanup(func() {
 		_ = outbound.Close()
@@ -692,6 +794,9 @@ func TestAnyConnectCSTPSoak(t *testing.T) {
 	session, err := outbound.run(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if legacyDTLS {
+		waitAnyConnectTransport(t, ctx, session, "dtls")
 	}
 	udpConnection, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
 	if err != nil {
@@ -715,6 +820,7 @@ func TestAnyConnectCSTPSoak(t *testing.T) {
 		}
 		sequence++
 		payload := "soak-" + strconv.Itoa(sequence)
+		exchangeAnyConnectUDP(t, ctx, udpConnection, destination, payload)
 		tcpConnection, err := outbound.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: peerAddress, DstPort: testAnyConnectTCPPort})
 		if err != nil {
 			t.Fatal(err)
@@ -733,33 +839,47 @@ func TestAnyConnectCSTPSoak(t *testing.T) {
 		if string(tcpReply) != payload {
 			t.Fatalf("unexpected soak TCP reply: %q", tcpReply)
 		}
-		exchangeAnyConnectUDP(t, ctx, udpConnection, destination, payload)
 
 		now := time.Now()
 		if !now.Before(nextReconnect) {
-			before, _ := dialer.counts()
-			if closed := gateway.DropCSTPConnections(); closed != 1 {
-				t.Fatalf("soak expected one active CSTP connection, closed %d", closed)
-			}
-			for {
-				connections, _ := dialer.counts()
-				if connections == before+1 {
-					break
+			if legacyDTLS {
+				legacyHandshakes := countRecords(recorder.Records(), "legacy-dtls-handshake")
+				gateway.SetDTLSBlackhole(true)
+				waitAnyConnectTransport(t, ctx, session, "cstp")
+				gateway.SetDTLSBlackhole(false)
+				for countRecords(recorder.Records(), "legacy-dtls-handshake") <= legacyHandshakes {
+					select {
+					case <-ctx.Done():
+						t.Fatal(ctx.Err())
+					case <-time.After(10 * time.Millisecond):
+					}
 				}
-				if connections > before+1 {
-					t.Fatalf("one CSTP failure caused %d reconnect attempts", connections-before)
+				waitAnyConnectTransport(t, ctx, session, "dtls")
+			} else {
+				before, _ := dialer.counts()
+				if closed := gateway.DropCSTPConnections(); closed != 1 {
+					t.Fatalf("soak expected one active CSTP connection, closed %d", closed)
 				}
-				select {
-				case <-ctx.Done():
-					t.Fatal(ctx.Err())
-				case <-time.After(10 * time.Millisecond):
+				for {
+					connections, _ := dialer.counts()
+					if connections == before+1 {
+						break
+					}
+					if connections > before+1 {
+						t.Fatalf("one CSTP failure caused %d reconnect attempts", connections-before)
+					}
+					select {
+					case <-ctx.Done():
+						t.Fatal(ctx.Err())
+					case <-time.After(10 * time.Millisecond):
+					}
 				}
-			}
-			if _, err := session.client.WaitReady(ctx); err != nil {
-				t.Fatal(err)
+				if _, err := session.client.WaitReady(ctx); err != nil {
+					t.Fatal(err)
+				}
 			}
 			reconnects++
-			nextReconnect = nextReconnect.Add(10 * time.Second)
+			nextReconnect = time.Now().Add(10 * time.Second)
 		}
 		if !now.Before(nextResourceCheck) {
 			if current := runtime.NumGoroutine(); current > activeGoroutines+8 {
@@ -772,7 +892,11 @@ func TestAnyConnectCSTPSoak(t *testing.T) {
 		}
 	}
 	connections, _ := dialer.counts()
-	if connections != reconnects+1 {
+	expectedConnections := reconnects + 1
+	if legacyDTLS {
+		expectedConnections = 1
+	}
+	if connections != expectedConnections {
 		t.Fatalf("CSTP reconnects were not bounded: connections=%d forced=%d", connections, reconnects)
 	}
 	_ = udpConnection.Close()

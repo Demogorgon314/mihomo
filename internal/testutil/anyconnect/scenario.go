@@ -56,16 +56,18 @@ type AuthenticationScenario struct {
 
 // Scenario describes one deterministic fake AnyConnect gateway behavior.
 type Scenario struct {
-	Name           string
-	Cookie         string
-	Configuration  NetworkConfiguration
-	Authentication AuthenticationScenario
-	ModernDTLS     bool
-	InjectedDTLS   bool
-	DTLSMTU        uint16
-	DTLSAppID      []byte
-	Compression    string
-	CSTP           CSTPFaults
+	Name            string
+	Cookie          string
+	Configuration   NetworkConfiguration
+	Authentication  AuthenticationScenario
+	ModernDTLS      bool
+	InjectedDTLS    bool
+	LegacyDTLS      bool
+	LegacyDTLSFault string
+	DTLSMTU         uint16
+	DTLSAppID       []byte
+	Compression     string
+	CSTP            CSTPFaults
 }
 
 // BasicCSTPScenario returns the smallest valid IPv4 CSTP scenario.
@@ -144,6 +146,26 @@ func (s Scenario) Validate() error {
 	}
 	if s.InjectedDTLS && (!s.ModernDTLS || len(s.DTLSAppID) > 0) {
 		validationErrors = append(validationErrors, errors.New("injected DTLS requires modern DTLS without an App ID"))
+	}
+	if s.ModernDTLS && s.LegacyDTLS {
+		validationErrors = append(validationErrors, errors.New("modern and legacy DTLS fake modes are mutually exclusive"))
+	}
+	if s.LegacyDTLSFault != "" && !s.LegacyDTLS {
+		validationErrors = append(validationErrors, errors.New("legacy DTLS fault requires legacy DTLS"))
+	}
+	if s.LegacyDTLSFault != "" {
+		validFaults := map[string]bool{
+			"downgrade-version":  true,
+			"unsupported-cipher": true,
+			"bad-finished":       true,
+			"bad-data-mac":       true,
+			"bad-padding":        true,
+			"duplicate-data":     true,
+			"reorder-data":       true,
+		}
+		if !validFaults[s.LegacyDTLSFault] {
+			validationErrors = append(validationErrors, fmt.Errorf("unsupported legacy DTLS fault: %s", s.LegacyDTLSFault))
+		}
 	}
 	if len(s.CSTP.CompressedPackets) > 0 && s.Compression == "" {
 		validationErrors = append(validationErrors, errors.New("compressed packets require negotiated compression"))

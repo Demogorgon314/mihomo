@@ -158,6 +158,7 @@ func TestClientRejectsInvalidConfigWithoutLeakingCookie(t *testing.T) {
 		{name: "invalid server name", config: Config{Server: "https://vpn.example", Cookie: secret, ServerName: "bad\nname"}},
 		{name: "unbounded packet queue", config: Config{Server: "https://vpn.example", Cookie: secret, QueueLength: MaximumQueueLength + 1}},
 		{name: "invalid DTLS mode", config: Config{Server: "https://vpn.example", Cookie: secret, DTLSMode: "invalid"}},
+		{name: "legacy DTLS while disabled", config: Config{Server: "https://vpn.example", Cookie: secret, DTLSMode: DTLSModeOff, LegacyDTLS: true}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			_, err := NewClient(context.Background(), testCase.config, new(recordingDialer), nil)

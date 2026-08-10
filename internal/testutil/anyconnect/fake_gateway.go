@@ -31,41 +31,46 @@ const (
 
 // Gateway is a hermetic TLS/CSTP server used only by protocol tests.
 type Gateway struct {
-	scenario     Scenario
-	peer         PacketPeer
-	recorder     *Recorder
-	listener     net.Listener
-	dtlsListener net.Listener
-	roots        *x509.CertPool
-	ctx          context.Context
+	scenario       Scenario
+	peer           PacketPeer
+	recorder       *Recorder
+	listener       net.Listener
+	dtlsListener   net.Listener
+	legacyDTLSConn *net.UDPConn
+	roots          *x509.CertPool
+	ctx            context.Context
 
-	cancel               context.CancelFunc
-	waitGroup            sync.WaitGroup
-	closeOnce            sync.Once
-	closeErr             error
-	errorLock            sync.Mutex
-	errors               []error
-	connLock             sync.Mutex
-	conns                map[net.Conn]struct{}
-	pskLock              sync.RWMutex
-	psk                  []byte
-	dtlsMasterSecret     []byte
-	dtlsOwnerActive      bool
-	authLock             sync.Mutex
-	authGeneration       uint64
-	authChallengePending bool
-	activeCookie         string
-	activeCookieUses     int
-	cstpLock             sync.Mutex
-	cstpConnections      map[net.Conn]struct{}
-	cstpDropped          map[net.Conn]struct{}
-	cstpAttempts         atomic.Uint64
-	dtlsConnLock         sync.Mutex
-	dtlsConnections      map[net.Conn]struct{}
-	dtlsDropped          map[net.Conn]struct{}
-	dtlsBlackhole        atomic.Bool
-	dtlsAppIDObserved    atomic.Bool
-	dtlsResumeObserved   atomic.Bool
+	cancel                  context.CancelFunc
+	waitGroup               sync.WaitGroup
+	closeOnce               sync.Once
+	closeErr                error
+	errorLock               sync.Mutex
+	errors                  []error
+	connLock                sync.Mutex
+	conns                   map[net.Conn]struct{}
+	pskLock                 sync.RWMutex
+	psk                     []byte
+	dtlsMasterSecret        []byte
+	dtlsOwnerActive         bool
+	authLock                sync.Mutex
+	authGeneration          uint64
+	authChallengePending    bool
+	activeCookie            string
+	activeCookieUses        int
+	cstpLock                sync.Mutex
+	cstpConnections         map[net.Conn]struct{}
+	cstpDropped             map[net.Conn]struct{}
+	cstpAttempts            atomic.Uint64
+	dtlsConnLock            sync.Mutex
+	dtlsConnections         map[net.Conn]struct{}
+	dtlsDropped             map[net.Conn]struct{}
+	dtlsBlackhole           atomic.Bool
+	dtlsAppIDObserved       atomic.Bool
+	dtlsResumeObserved      atomic.Bool
+	legacyHandshakeObserved atomic.Bool
+	legacyDTLSOffered       atomic.Bool
+	legacyLock              sync.Mutex
+	legacySession           *fakeLegacyDTLSSession
 }
 
 var (
@@ -142,11 +147,23 @@ func StartGateway(parent context.Context, scenario Scenario, peer PacketPeer, re
 			return nil, fmt.Errorf("configure fake DTLS gateway: %w", err)
 		}
 	}
+	if scenario.LegacyDTLS {
+		gateway.legacyDTLSConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+		if err != nil {
+			cancel()
+			_ = listener.Close()
+			return nil, fmt.Errorf("configure fake legacy DTLS gateway: %w", err)
+		}
+	}
 	gateway.waitGroup.Add(2)
 	go gateway.acceptLoop()
 	if gateway.dtlsListener != nil {
 		gateway.waitGroup.Add(1)
 		go gateway.acceptDTLSLoop()
+	}
+	if gateway.legacyDTLSConn != nil {
+		gateway.waitGroup.Add(1)
+		go gateway.runLegacyDTLS()
 	}
 	go func() {
 		defer gateway.waitGroup.Done()
@@ -154,6 +171,9 @@ func StartGateway(parent context.Context, scenario Scenario, peer PacketPeer, re
 		_ = listener.Close()
 		if gateway.dtlsListener != nil {
 			_ = gateway.dtlsListener.Close()
+		}
+		if gateway.legacyDTLSConn != nil {
+			_ = gateway.legacyDTLSConn.Close()
 		}
 	}()
 	return gateway, nil
@@ -235,6 +255,12 @@ func (g *Gateway) Close() error {
 			dtlsListenerErr := g.dtlsListener.Close()
 			if dtlsListenerErr != nil && !errors.Is(dtlsListenerErr, net.ErrClosed) {
 				g.closeErr = errors.Join(g.closeErr, fmt.Errorf("close fake DTLS listener: %w", dtlsListenerErr))
+			}
+		}
+		if g.legacyDTLSConn != nil {
+			legacyErr := g.legacyDTLSConn.Close()
+			if legacyErr != nil && !errors.Is(legacyErr, net.ErrClosed) {
+				g.closeErr = errors.Join(g.closeErr, fmt.Errorf("close fake legacy DTLS listener: %w", legacyErr))
 			}
 		}
 		g.connLock.Lock()
@@ -320,15 +346,22 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 		g.record("cstp-connect", fmt.Sprintf("rejected with HTTP %d", g.scenario.CSTP.RejectStatus))
 		return writeHTTPRejection(connection, g.scenario.CSTP.RejectStatus)
 	}
-	if g.scenario.ModernDTLS {
+	if g.scenario.ModernDTLS || g.scenario.LegacyDTLS {
+		if strings.Contains(request.Header.Get("X-DTLS-CipherSuite"), "AES128-SHA") {
+			g.legacyDTLSOffered.Store(true)
+		}
 		tlsConnection, ok := connection.(*tls.Conn)
 		if !ok {
 			return errors.New("fake CSTP connection is not TLS")
 		}
-		connectionState := tlsConnection.ConnectionState()
-		psk, exportErr := connectionState.ExportKeyingMaterial("EXPORTER-openconnect-psk", nil, 32)
-		if exportErr != nil {
-			return fmt.Errorf("export fake DTLS PSK: %w", exportErr)
+		var psk []byte
+		if g.scenario.ModernDTLS {
+			connectionState := tlsConnection.ConnectionState()
+			exportedPSK, exportErr := connectionState.ExportKeyingMaterial("EXPORTER-openconnect-psk", nil, 32)
+			if exportErr != nil {
+				return fmt.Errorf("export fake DTLS PSK: %w", exportErr)
+			}
+			psk = exportedPSK
 		}
 		var masterSecret []byte
 		if masterSecretHeader := request.Header.Get("X-DTLS-Master-Secret"); masterSecretHeader != "" {
@@ -337,7 +370,7 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 			if decodeErr != nil || len(masterSecret) != 48 {
 				return errors.New("fake CSTP request did not contain a valid DTLS master secret")
 			}
-		} else if g.scenario.InjectedDTLS {
+		} else if g.scenario.InjectedDTLS || g.scenario.LegacyDTLS {
 			return errors.New("injected DTLS request did not contain a master secret")
 		}
 		if !g.claimDTLSSession(psk, masterSecret) {
@@ -522,6 +555,18 @@ func (g *Gateway) writeConnectResponse(connection net.Conn, configuration Networ
 			response.WriteString("\r\nX-DTLS-App-ID: ")
 			response.WriteString(hex.EncodeToString(g.scenario.DTLSAppID))
 		}
+		response.WriteString("\r\n")
+	} else if g.scenario.LegacyDTLS {
+		_, port, err := net.SplitHostPort(g.legacyDTLSConn.LocalAddr().String())
+		if err != nil {
+			return fmt.Errorf("parse fake legacy DTLS port: %w", err)
+		}
+		response.WriteString("X-DTLS-CipherSuite: AES128-SHA\r\nX-DTLS-Session-ID: ")
+		response.WriteString(hex.EncodeToString(fakeDTLSSessionID()))
+		response.WriteString("\r\nX-DTLS-Port: ")
+		response.WriteString(port)
+		response.WriteString("\r\nX-DTLS-MTU: ")
+		response.WriteString(strconv.Itoa(int(configuration.MTU)))
 		response.WriteString("\r\n")
 	}
 	response.WriteString("X-CSTP-Keepalive: 30\r\nX-CSTP-DPD: 30\r\n\r\n")

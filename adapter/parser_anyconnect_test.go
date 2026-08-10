@@ -74,6 +74,10 @@ func TestParseAnyConnectRejectsInvalidOptions(t *testing.T) {
 			mapping["token-secret"] = "AA"
 		}},
 		{name: "invalid DTLS mode", change: func(mapping map[string]any) { mapping["dtls-mode"] = "invalid" }},
+		{name: "legacy DTLS while disabled", change: func(mapping map[string]any) {
+			mapping["dtls-mode"] = "off"
+			mapping["legacy-dtls"] = true
+		}},
 		{name: "negative timeout", change: func(mapping map[string]any) { mapping["handshake-timeout"] = -1 }},
 		{name: "small MTU", change: func(mapping map[string]any) { mapping["mtu"] = 575 }},
 		{name: "small IPv6 MTU", change: func(mapping map[string]any) {
