@@ -1,0 +1,69 @@
+name: AnyConnect Interop
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - ".github/workflows/anyconnect-interop.yml"
+      - "internal/testutil/anyconnect/**"
+      - "go.mod"
+      - "go.sum"
+
+permissions:
+  contents: read
+
+jobs:
+  hermetic-and-ocserv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: 0
+      GOTOOLCHAIN: local
+      MIHOMO_ANYCONNECT_OCSERV: 1
+      MIHOMO_ANYCONNECT_MATRIX: artifacts/hermetic-capabilities.json
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
+          go-version: "1.25"
+
+      - name: Check out pinned sing-openconnect fork
+        uses: actions/checkout@v6
+        with:
+          repository: Demogorgon314/sing-openconnect
+          ref: 609fb9d2c9d0cba8e60dc3b87decb8deb9df40c8
+          path: .anyconnect-upstream
+
+      - name: Verify hermetic harness
+        run: go test ./internal/testutil/anyconnect -count=20
+
+      - name: Verify hermetic harness with gVisor
+        env:
+          MIHOMO_ANYCONNECT_MATRIX: artifacts/gvisor-capabilities.json
+        run: go test -tags=with_gvisor ./internal/testutil/anyconnect -count=1
+
+      - name: Scan reachable Go vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
+      - name: Verify pinned ocserv fixture
+        env:
+          MIHOMO_ANYCONNECT_MATRIX: artifacts/ocserv-capabilities.json
+        run: go test -tags=anyconnect_ocserv ./internal/testutil/anyconnect -run '^TestOCServFixture$' -count=1 -v
+
+      - name: Verify full upstream ocserv matrix
+        working-directory: .anyconnect-upstream/test
+        run: go test ./... -count=1 -timeout=15m
+
+      - name: Upload capability matrices
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: anyconnect-capability-matrices
+          path: artifacts/*.json
+          if-no-files-found: error
