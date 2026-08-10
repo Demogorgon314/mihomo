@@ -76,6 +76,20 @@ func TestParseAnyConnectRejectsInvalidOptions(t *testing.T) {
 		{name: "unsupported DTLS", change: func(mapping map[string]any) { mapping["dtls-mode"] = "auto" }},
 		{name: "negative timeout", change: func(mapping map[string]any) { mapping["handshake-timeout"] = -1 }},
 		{name: "small MTU", change: func(mapping map[string]any) { mapping["mtu"] = 575 }},
+		{name: "small IPv6 MTU", change: func(mapping map[string]any) {
+			mapping["ipv6"] = true
+			mapping["mtu"] = 1279
+		}},
+		{name: "small base MTU", change: func(mapping map[string]any) { mapping["base-mtu"] = 575 }},
+		{name: "negative DPD interval", change: func(mapping map[string]any) { mapping["dpd-interval"] = -1 }},
+		{name: "negative reconnect timeout", change: func(mapping map[string]any) { mapping["reconnect-timeout"] = -1 }},
+		{name: "invalid compression", change: func(mapping map[string]any) { mapping["compression"] = "deflate" }},
+		{name: "unbounded packet queue", change: func(mapping map[string]any) { mapping["queue-length"] = 4097 }},
+		{name: "DNS override without remote resolve", change: func(mapping map[string]any) { mapping["dns"] = []string{"192.0.2.53"} }},
+		{name: "DNS hostname override", change: func(mapping map[string]any) {
+			mapping["remote-dns-resolve"] = true
+			mapping["dns"] = []string{"resolver.example"}
+		}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			mapping := map[string]any{

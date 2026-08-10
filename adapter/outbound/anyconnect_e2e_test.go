@@ -10,6 +10,8 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +34,35 @@ type anyConnectRecordingDialer struct {
 	destinations []string
 	dialStarted  chan struct{}
 	dialOnce     sync.Once
+}
+
+type anyConnectBlockingReconnectDialer struct {
+	access           sync.Mutex
+	attempts         int
+	reconnectStarted chan struct{}
+}
+
+func (d *anyConnectBlockingReconnectDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	d.access.Lock()
+	d.attempts++
+	attempt := d.attempts
+	d.access.Unlock()
+	if attempt == 2 {
+		close(d.reconnectStarted)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, address)
+}
+
+func (d *anyConnectBlockingReconnectDialer) ListenPacket(context.Context, string, string, netip.AddrPort) (net.PacketConn, error) {
+	return nil, errors.New("unexpected UDP underlay")
+}
+
+func (d *anyConnectBlockingReconnectDialer) count() int {
+	d.access.Lock()
+	defer d.access.Unlock()
+	return d.attempts
 }
 
 type anyConnectAuthProviderFunc func(context.Context, ac.AuthChallenge) (ac.AuthResponse, error)
@@ -157,6 +188,524 @@ func TestAnyConnectOutboundTCPAndUDPEcho(t *testing.T) {
 	writeAnyConnectOutboundEvidence(t, scenario.Name)
 }
 
+func TestAnyConnectOutboundIPv6TCPAndUDPEcho(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	scenario := testanyconnect.BasicCSTPScenario()
+	scenario.Configuration.Addresses = []netip.Prefix{netip.MustParsePrefix("2001:db8::2/64")}
+	scenario.Configuration.DNS = []netip.Addr{netip.MustParseAddr("2001:db8::53")}
+	peerAddress := netip.MustParseAddr("2001:db8::1")
+	peer, err := testanyconnect.NewIPv6TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = peer.Close() }()
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = gateway.Close() }()
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+		option.IPv6 = true
+		option.MTU = 1280
+	})
+	defer func() { _ = outbound.Close() }()
+
+	connection, err := outbound.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: peerAddress, DstPort: testAnyConnectTCPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := []byte("anyconnect IPv6 TCP echo")
+	if _, err := connection.Write(request); err != nil {
+		t.Fatal(err)
+	}
+	reply := make([]byte, len(request))
+	if _, err := io.ReadFull(connection, reply); err != nil {
+		t.Fatal(err)
+	}
+	if string(reply) != string(request) {
+		t.Fatalf("unexpected IPv6 TCP echo: %q", reply)
+	}
+	_ = connection.Close()
+
+	packetConn, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchangeAnyConnectUDP(t, ctx, packetConn, &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}, "anyconnect IPv6 UDP echo")
+	_ = packetConn.Close()
+	writeAnyConnectEvidenceForAddress(t, "ipv6", scenario.Name+"-tcp-udp-echo", []testanyconnect.Capability{testanyconnect.CapabilityPacketIPv6}, "ipv6")
+}
+
+func TestAnyConnectRemoteDNSUsesTunnelAndOverridePrecedence(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		serverDNS   netip.Addr
+		overrideDNS []string
+	}{
+		{name: "server DNS", serverDNS: netip.MustParseAddr("192.0.2.1")},
+		{name: "override DNS", serverDNS: netip.MustParseAddr("192.0.2.99"), overrideDNS: []string{"192.0.2.1"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			scenario := testanyconnect.BasicCSTPScenario()
+			scenario.Configuration.DNS = []netip.Addr{testCase.serverDNS}
+			peerAddress := netip.MustParseAddr("192.0.2.1")
+			peer, err := testanyconnect.NewIPv4TCPUDPEchoPeerWithDNS(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort, 53, map[string]netip.Addr{
+				"service.internal": peerAddress,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = peer.Close() }()
+			gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = gateway.Close() }()
+			dialer := new(anyConnectRecordingDialer)
+			outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *AnyConnectOption) {
+				option.RemoteDnsResolve = true
+				option.Dns = testCase.overrideDNS
+			})
+			defer func() { _ = outbound.Close() }()
+			connection, err := outbound.DialContext(ctx, &C.Metadata{NetWork: C.TCP, Host: "service.internal", DstPort: testAnyConnectTCPPort})
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload := []byte("resolved through tunnel")
+			if _, err := connection.Write(payload); err != nil {
+				t.Fatal(err)
+			}
+			reply := make([]byte, len(payload))
+			if _, err := io.ReadFull(connection, reply); err != nil {
+				t.Fatal(err)
+			}
+			_ = connection.Close()
+			if string(reply) != string(payload) || peer.DNSQueries() == 0 {
+				t.Fatalf("remote DNS did not resolve through the tunnel: reply=%q queries=%d", reply, peer.DNSQueries())
+			}
+			tcpCalls, udpCalls := dialer.counts()
+			if tcpCalls != 1 || udpCalls != 0 {
+				t.Fatalf("remote DNS recursed into the gateway underlay: tcp=%d udp=%d", tcpCalls, udpCalls)
+			}
+		})
+	}
+	writeAnyConnectEvidence(t, "dns", "server-and-override-private-dns", []testanyconnect.Capability{testanyconnect.CapabilityPrivateDNS})
+}
+
+func TestAnyConnectReconnectKeepsGenerationAndUDPFlow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	scenario := testanyconnect.BasicCSTPScenario()
+	scenario.CSTP.RekeyInterval = 4 * time.Second
+	peerAddress := netip.MustParseAddr("192.0.2.1")
+	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = peer.Close() }()
+	recorder := testanyconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = gateway.Close() }()
+	dialer := new(anyConnectRecordingDialer)
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *AnyConnectOption) {
+		option.ReconnectTimeout = 5
+		option.DPDInterval = 2
+	})
+	defer func() { _ = outbound.Close() }()
+	session, err := outbound.run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstDevice, _, err := session.currentDevice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
+	exchange := func(payload string) {
+		exchangeAnyConnectUDP(t, ctx, connection, destination, payload)
+	}
+	exchange("before reconnect")
+	for countRecords(recorder.Records(), "cstp-dpd") == 0 {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	for countRecords(recorder.Records(), "cstp-connect") < 2 {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if closed := gateway.DropCSTPConnections(); closed != 1 {
+		t.Fatalf("expected one active CSTP connection, closed %d", closed)
+	}
+	for countRecords(recorder.Records(), "cstp-connect") < 3 {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if _, err := session.client.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	secondSession, err := outbound.run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDevice, _, err := secondSession.currentDevice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondSession != session || secondDevice != firstDevice {
+		t.Fatal("same network identity replaced the session or stack generation during reconnect")
+	}
+	exchange("after reconnect")
+	writeAnyConnectEvidence(t, "reconnect", scenario.Name+"-dpd-rekey-eof", []testanyconnect.Capability{
+		testanyconnect.CapabilityDPD,
+		testanyconnect.CapabilityRekey,
+		testanyconnect.CapabilityReconnect,
+	})
+}
+
+func TestAnyConnectReconnectReplacesChangedNetworkGeneration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	scenario := testanyconnect.BasicCSTPScenario()
+	reconfigured := scenario.Configuration
+	reconfigured.Addresses = []netip.Prefix{netip.MustParsePrefix("198.51.100.2/24")}
+	scenario.CSTP.ReconnectConfiguration = &reconfigured
+	peerAddress := netip.MustParseAddr("192.0.2.1")
+	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = peer.Close() }()
+	recorder := testanyconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = gateway.Close() }()
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+		option.ReconnectTimeout = 5
+	})
+	defer func() { _ = outbound.Close() }()
+	session, err := outbound.run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstDevice, _, err := session.currentDevice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldFlow, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
+	exchangeAnyConnectUDP(t, ctx, oldFlow, destination, "before identity change")
+	if closed := gateway.DropCSTPConnections(); closed != 1 {
+		t.Fatalf("expected one active CSTP connection, closed %d", closed)
+	}
+	for countRecords(recorder.Records(), "cstp-connect") < 2 {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	configuration, err := session.client.WaitReady(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDevice, _, err := session.currentDevice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configuration.Addresses[0] != reconfigured.Addresses[0] || secondDevice == firstDevice {
+		t.Fatalf("changed network identity did not replace the stack: %#v", configuration.Addresses)
+	}
+	if _, err := oldFlow.WriteTo([]byte("stale flow"), destination); err == nil {
+		t.Fatal("flow from the replaced generation remained usable")
+	}
+	_ = oldFlow.Close()
+	newFlow, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer newFlow.Close()
+	exchangeAnyConnectUDP(t, ctx, newFlow, destination, "after identity change")
+}
+
+func TestAnyConnectReconnectTimeoutIsBounded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	scenario := testanyconnect.BasicCSTPScenario()
+	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialer := new(anyConnectRecordingDialer)
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *AnyConnectOption) {
+		option.ReconnectTimeout = 1
+	})
+	defer func() { _ = outbound.Close() }()
+	session, err := outbound.run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gateway.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-session.done:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if !errors.Is(session.err(), ac.ErrReconnectTimeout) {
+		t.Fatalf("unexpected terminal reconnect error: %v", session.err())
+	}
+	attempts, _ := dialer.counts()
+	if attempts < 2 || attempts > 3 {
+		t.Fatalf("reconnect attempts were not bounded: %d", attempts)
+	}
+}
+
+func TestAnyConnectCloseStopsActiveReconnect(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	scenario := testanyconnect.BasicCSTPScenario()
+	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = gateway.Close() }()
+	dialer := &anyConnectBlockingReconnectDialer{reconnectStarted: make(chan struct{})}
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *AnyConnectOption) {
+		option.ReconnectTimeout = 5
+	})
+	if _, err := outbound.run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if closed := gateway.DropCSTPConnections(); closed != 1 {
+		t.Fatalf("expected one active CSTP connection, closed %d", closed)
+	}
+	select {
+	case <-dialer.reconnectStarted:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if err := outbound.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if attempts := dialer.count(); attempts != 2 {
+		t.Fatalf("supervisor dialed after close: %d attempts", attempts)
+	}
+	if _, err := outbound.run(ctx); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("run after close returned %v", err)
+	}
+}
+
+func TestAnyConnectCSTPSoak(t *testing.T) {
+	if os.Getenv("MIHOMO_ANYCONNECT_SOAK") != "1" {
+		t.Skip("set MIHOMO_ANYCONNECT_SOAK=1 to run the accelerated CSTP soak")
+	}
+	const soakDuration = 5 * time.Minute
+	baselineGoroutines := runtime.NumGoroutine()
+	baselineFDs := countAnyConnectFileDescriptors()
+	ctx, cancel := context.WithTimeout(context.Background(), soakDuration+30*time.Second)
+	defer cancel()
+	scenario := testanyconnect.BasicCSTPScenario()
+	peerAddress := netip.MustParseAddr("192.0.2.1")
+	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	if err != nil {
+		_ = peer.Close()
+		t.Fatal(err)
+	}
+	dialer := new(anyConnectRecordingDialer)
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *AnyConnectOption) {
+		option.ReconnectTimeout = 5
+		option.DPDInterval = 30
+		option.QueueLength = 64
+	})
+	t.Cleanup(func() {
+		_ = outbound.Close()
+		_ = gateway.Close()
+		_ = peer.Close()
+	})
+	session, err := outbound.run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	udpConnection, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
+	activeGoroutines := runtime.NumGoroutine()
+	activeFDs := countAnyConnectFileDescriptors()
+	start := time.Now()
+	nextReconnect := start.Add(10 * time.Second)
+	nextResourceCheck := start.Add(10 * time.Second)
+	reconnects := 0
+	sequence := 0
+	trafficTicker := time.NewTicker(time.Second)
+	defer trafficTicker.Stop()
+	for time.Since(start) < soakDuration {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-trafficTicker.C:
+		}
+		sequence++
+		payload := "soak-" + strconv.Itoa(sequence)
+		tcpConnection, err := outbound.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: peerAddress, DstPort: testAnyConnectTCPPort})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = tcpConnection.SetDeadline(time.Now().Add(10 * time.Second))
+		if _, err := tcpConnection.Write([]byte(payload)); err != nil {
+			_ = tcpConnection.Close()
+			t.Fatal(err)
+		}
+		tcpReply := make([]byte, len(payload))
+		if _, err := io.ReadFull(tcpConnection, tcpReply); err != nil {
+			_ = tcpConnection.Close()
+			t.Fatal(err)
+		}
+		_ = tcpConnection.Close()
+		if string(tcpReply) != payload {
+			t.Fatalf("unexpected soak TCP reply: %q", tcpReply)
+		}
+		exchangeAnyConnectUDP(t, ctx, udpConnection, destination, payload)
+
+		now := time.Now()
+		if !now.Before(nextReconnect) {
+			before, _ := dialer.counts()
+			if closed := gateway.DropCSTPConnections(); closed != 1 {
+				t.Fatalf("soak expected one active CSTP connection, closed %d", closed)
+			}
+			for {
+				connections, _ := dialer.counts()
+				if connections == before+1 {
+					break
+				}
+				if connections > before+1 {
+					t.Fatalf("one CSTP failure caused %d reconnect attempts", connections-before)
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			if _, err := session.client.WaitReady(ctx); err != nil {
+				t.Fatal(err)
+			}
+			reconnects++
+			nextReconnect = nextReconnect.Add(10 * time.Second)
+		}
+		if !now.Before(nextResourceCheck) {
+			if current := runtime.NumGoroutine(); current > activeGoroutines+8 {
+				t.Fatalf("CSTP soak goroutines grew from %d to %d", activeGoroutines, current)
+			}
+			if current := countAnyConnectFileDescriptors(); activeFDs >= 0 && current > activeFDs+4 {
+				t.Fatalf("CSTP soak file descriptors grew from %d to %d", activeFDs, current)
+			}
+			nextResourceCheck = nextResourceCheck.Add(10 * time.Second)
+		}
+	}
+	connections, _ := dialer.counts()
+	if connections != reconnects+1 {
+		t.Fatalf("CSTP reconnects were not bounded: connections=%d forced=%d", connections, reconnects)
+	}
+	_ = udpConnection.Close()
+	if err := outbound.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateway.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := peer.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		runtime.GC()
+		goroutines := runtime.NumGoroutine()
+		fds := countAnyConnectFileDescriptors()
+		if goroutines <= baselineGoroutines+4 && (baselineFDs < 0 || fds <= baselineFDs+2) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("CSTP soak leaked resources: goroutines %d -> %d, file descriptors %d -> %d", baselineGoroutines, goroutines, baselineFDs, fds)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func exchangeAnyConnectUDP(t *testing.T, ctx context.Context, connection net.PacketConn, destination net.Addr, payload string) {
+	t.Helper()
+	for ctx.Err() == nil {
+		if _, err := connection.WriteTo([]byte(payload), destination); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(500 * time.Millisecond)
+		for {
+			_ = connection.SetReadDeadline(deadline)
+			reply := make([]byte, 128)
+			count, _, err := connection.ReadFrom(reply)
+			if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(reply[:count]) == payload {
+				return
+			}
+		}
+	}
+	t.Fatal(ctx.Err())
+}
+
+func countAnyConnectFileDescriptors() int {
+	for _, directory := range []string{"/proc/self/fd", "/dev/fd"} {
+		entries, err := os.ReadDir(directory)
+		if err == nil {
+			return len(entries)
+		}
+	}
+	return -1
+}
+
 func TestAnyConnectConcurrentStartupAndCallerCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -225,8 +774,9 @@ func TestAnyConnectConcurrentStartupAndCallerCancellation(t *testing.T) {
 	if first == nil {
 		t.Fatal("no caller received a session")
 	}
-	if len(first.configuration.Routes) == 0 || first.configuration.Routes[0] != netip.MustParsePrefix("0.0.0.0/0") {
-		t.Fatalf("negotiated routes were not retained: %#v", first.configuration.Routes)
+	configuration := first.configurationSnapshot()
+	if len(configuration.Routes) == 0 || configuration.Routes[0] != netip.MustParsePrefix("0.0.0.0/0") {
+		t.Fatalf("negotiated routes were not retained: %#v", configuration.Routes)
 	}
 	if countRecords(recorder.Records(), "cstp-connect") != 1 {
 		t.Fatalf("expected one shared CSTP session, records=%v", recorder.Records())
@@ -491,6 +1041,10 @@ func writeAnyConnectOutboundEvidence(t *testing.T, scenario string) {
 }
 
 func writeAnyConnectEvidence(t *testing.T, suffix string, scenario string, capabilities []testanyconnect.Capability) {
+	writeAnyConnectEvidenceForAddress(t, suffix, scenario, capabilities, "ipv4")
+}
+
+func writeAnyConnectEvidenceForAddress(t *testing.T, suffix string, scenario string, capabilities []testanyconnect.Capability, address string) {
 	t.Helper()
 	path := os.Getenv("MIHOMO_ANYCONNECT_MATRIX")
 	if path == "" {
@@ -506,7 +1060,7 @@ func writeAnyConnectEvidence(t *testing.T, suffix string, scenario string, capab
 			Driver:     testanyconnect.DriverOutbound,
 			Gateway:    "fake",
 			Transport:  "cstp",
-			Address:    "ipv4",
+			Address:    address,
 			Passed:     true,
 		}); err != nil {
 			t.Fatal(err)

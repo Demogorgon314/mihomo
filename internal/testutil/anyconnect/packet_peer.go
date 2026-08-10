@@ -9,6 +9,8 @@ import (
 
 const ipv4ICMPProtocol = 1
 
+const ipv6ICMPProtocol = 58
+
 // PacketPeer handles raw tunnel packets without relying on the client implementation.
 type PacketPeer interface {
 	HandlePacket(packet []byte) ([]byte, error)
@@ -32,6 +34,49 @@ func handlePeerPackets(peer PacketPeer, packet []byte) ([][]byte, error) {
 // IPv4ICMPEchoPeer replies to valid ICMP echo requests addressed to it.
 type IPv4ICMPEchoPeer struct {
 	address netip.Addr
+}
+
+// IPv6ICMPEchoPeer replies to valid ICMPv6 echo requests addressed to it.
+type IPv6ICMPEchoPeer struct {
+	address netip.Addr
+}
+
+// NewIPv6ICMPEchoPeer creates a raw IPv6 packet peer.
+func NewIPv6ICMPEchoPeer(address netip.Addr) (*IPv6ICMPEchoPeer, error) {
+	if !address.Is6() || address.IsUnspecified() {
+		return nil, fmt.Errorf("ICMPv6 echo peer requires a concrete IPv6 address: %s", address)
+	}
+	return &IPv6ICMPEchoPeer{address: address}, nil
+}
+
+// HandlePacket validates one IPv6 ICMP echo request and returns a caller-owned reply.
+func (p *IPv6ICMPEchoPeer) HandlePacket(packet []byte) ([]byte, error) {
+	if p == nil {
+		return nil, errors.New("ICMPv6 echo peer is nil")
+	}
+	if len(packet) < 48 || packet[0]>>4 != 6 || packet[6] != ipv6ICMPProtocol {
+		return nil, errors.New("packet is not a complete IPv6 ICMP echo request")
+	}
+	payloadLength := int(binary.BigEndian.Uint16(packet[4:6]))
+	if payloadLength != len(packet)-40 {
+		return nil, fmt.Errorf("IPv6 payload length mismatch: %d != %d", payloadLength, len(packet)-40)
+	}
+	destination, ok := netip.AddrFromSlice(packet[24:40])
+	if !ok || destination != p.address {
+		return nil, fmt.Errorf("packet addressed to %s instead of %s", destination, p.address)
+	}
+	message := packet[40:]
+	if message[0] != 128 || message[1] != 0 || icmpv6Checksum(packet[8:24], packet[24:40], message) != 0 {
+		return nil, errors.New("invalid ICMPv6 echo request")
+	}
+	reply := append([]byte(nil), packet...)
+	copy(reply[8:24], packet[24:40])
+	copy(reply[24:40], packet[8:24])
+	reply[7] = 64
+	reply[40] = 129
+	reply[42], reply[43] = 0, 0
+	binary.BigEndian.PutUint16(reply[42:44], icmpv6Checksum(reply[8:24], reply[24:40], reply[40:]))
+	return reply, nil
 }
 
 // NewIPv4ICMPEchoPeer creates a raw IPv4 packet peer.
@@ -114,6 +159,43 @@ func BuildIPv4ICMPEchoRequest(source netip.Addr, destination netip.Addr, identif
 	binary.BigEndian.PutUint16(packet[10:12], internetChecksum(packet[:20]))
 	copy(packet[20:], icmpMessage)
 	return packet, nil
+}
+
+// BuildIPv6ICMPEchoRequest builds a checksummed raw IPv6 packet for driver tests.
+func BuildIPv6ICMPEchoRequest(source netip.Addr, destination netip.Addr, identifier uint16, sequence uint16, payload []byte) ([]byte, error) {
+	if !source.Is6() || source.IsUnspecified() || !destination.Is6() || destination.IsUnspecified() {
+		return nil, errors.New("ICMPv6 echo request requires concrete IPv6 source and destination addresses")
+	}
+	if len(payload) > cstpMaximumPayloadSize-48 {
+		return nil, errors.New("ICMPv6 echo request payload is too large")
+	}
+	message := make([]byte, 8+len(payload))
+	message[0] = 128
+	binary.BigEndian.PutUint16(message[4:6], identifier)
+	binary.BigEndian.PutUint16(message[6:8], sequence)
+	copy(message[8:], payload)
+	packet := make([]byte, 40+len(message))
+	packet[0] = 0x60
+	binary.BigEndian.PutUint16(packet[4:6], uint16(len(message)))
+	packet[6] = ipv6ICMPProtocol
+	packet[7] = 64
+	sourceBytes := source.As16()
+	destinationBytes := destination.As16()
+	copy(packet[8:24], sourceBytes[:])
+	copy(packet[24:40], destinationBytes[:])
+	binary.BigEndian.PutUint16(message[2:4], icmpv6Checksum(packet[8:24], packet[24:40], message))
+	copy(packet[40:], message)
+	return packet, nil
+}
+
+func icmpv6Checksum(source []byte, destination []byte, message []byte) uint16 {
+	pseudoHeader := make([]byte, 40+len(message))
+	copy(pseudoHeader[0:16], source)
+	copy(pseudoHeader[16:32], destination)
+	binary.BigEndian.PutUint32(pseudoHeader[32:36], uint32(len(message)))
+	pseudoHeader[39] = ipv6ICMPProtocol
+	copy(pseudoHeader[40:], message)
+	return internetChecksum(pseudoHeader)
 }
 
 func internetChecksum(content []byte) uint16 {

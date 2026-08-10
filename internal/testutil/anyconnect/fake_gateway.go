@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/dtls/v3"
@@ -53,6 +54,10 @@ type Gateway struct {
 	authChallengePending bool
 	activeCookie         string
 	activeCookieUses     int
+	cstpLock             sync.Mutex
+	cstpConnections      map[net.Conn]struct{}
+	cstpDropped          map[net.Conn]struct{}
+	cstpAttempts         atomic.Uint64
 }
 
 var (
@@ -95,14 +100,16 @@ func StartGateway(parent context.Context, scenario Scenario, peer PacketPeer, re
 	}
 	ctx, cancel := context.WithCancel(parent)
 	gateway := &Gateway{
-		scenario: cloneScenario(scenario),
-		peer:     peer,
-		recorder: recorder,
-		listener: listener,
-		roots:    roots,
-		ctx:      ctx,
-		cancel:   cancel,
-		conns:    make(map[net.Conn]struct{}),
+		scenario:        cloneScenario(scenario),
+		peer:            peer,
+		recorder:        recorder,
+		listener:        listener,
+		roots:           roots,
+		ctx:             ctx,
+		cancel:          cancel,
+		conns:           make(map[net.Conn]struct{}),
+		cstpConnections: make(map[net.Conn]struct{}),
+		cstpDropped:     make(map[net.Conn]struct{}),
 	}
 	if scenario.ModernDTLS {
 		gateway.dtlsListener, err = dtls.ListenWithOptions("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")},
@@ -143,6 +150,27 @@ func (g *Gateway) Address() string {
 		return ""
 	}
 	return g.listener.Addr().String()
+}
+
+// DropCSTPConnections forces an established-tunnel EOF and returns the number closed.
+func (g *Gateway) DropCSTPConnections() int {
+	if g == nil {
+		return 0
+	}
+	g.cstpLock.Lock()
+	connections := make([]net.Conn, 0, len(g.cstpConnections))
+	for connection := range g.cstpConnections {
+		connections = append(connections, connection)
+		g.cstpDropped[connection] = struct{}{}
+	}
+	g.cstpLock.Unlock()
+	for _, connection := range connections {
+		_ = connection.Close()
+	}
+	if len(connections) > 0 {
+		g.record("cstp-eof", "dropped active CSTP connection")
+	}
+	return len(connections)
 }
 
 // ServerName returns the certificate name expected by the fake gateway.
@@ -233,11 +261,21 @@ func (g *Gateway) acceptLoop() {
 				g.connLock.Unlock()
 			}()
 			defer connection.Close()
-			if handleErr := g.handleConnection(connection); handleErr != nil {
+			handleErr := g.handleConnection(connection)
+			expectedClose := g.consumeDroppedCSTPConnection(connection)
+			if handleErr != nil && !expectedClose {
 				g.addError(handleErr)
 			}
 		}()
 	}
+}
+
+func (g *Gateway) consumeDroppedCSTPConnection(connection net.Conn) bool {
+	g.cstpLock.Lock()
+	_, dropped := g.cstpDropped[connection]
+	delete(g.cstpDropped, connection)
+	g.cstpLock.Unlock()
+	return dropped
 }
 
 func (g *Gateway) handleConnection(connection net.Conn) error {
@@ -291,13 +329,26 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 			return nil
 		}
 	}
-	if err := g.writeConnectResponse(connection); err != nil {
+	configuration := g.scenario.Configuration
+	if g.cstpAttempts.Add(1) > 1 && g.scenario.CSTP.ReconnectConfiguration != nil {
+		configuration = *g.scenario.CSTP.ReconnectConfiguration
+	}
+	if err := g.writeConnectResponse(connection, configuration); err != nil {
 		return err
 	}
+	g.cstpLock.Lock()
+	g.cstpConnections[connection] = struct{}{}
+	g.cstpLock.Unlock()
+	defer func() {
+		g.cstpLock.Lock()
+		delete(g.cstpConnections, connection)
+		g.cstpLock.Unlock()
+	}()
 	g.record("cstp-connect", "accepted")
 	if err := connection.SetDeadline(time.Time{}); err != nil {
 		return fmt.Errorf("clear fake gateway connection deadline: %w", err)
 	}
+	compressedFaultsSent := false
 	for {
 		frame, frameErr := readCSTPFrame(reader, cstpMaximumPayloadSize)
 		if frameErr != nil {
@@ -308,6 +359,14 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 		}
 		switch frame.packetType {
 		case cstpPacketData:
+			if !compressedFaultsSent {
+				for _, payload := range g.scenario.CSTP.CompressedPackets {
+					if writeErr := writeCSTPFrame(connection, cstpPacketCompressed, payload); writeErr != nil {
+						return writeErr
+					}
+				}
+				compressedFaultsSent = true
+			}
 			replies, peerErr := handlePeerPackets(g.peer, frame.payload)
 			if peerErr != nil {
 				return fmt.Errorf("handle tunneled packet: %w", peerErr)
@@ -323,9 +382,12 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 				g.record("cstp-data", fmt.Sprintf("replied with %d-byte packet", len(reply)))
 			}
 		case cstpPacketDPDRequest:
+			g.record("cstp-dpd", "answered dead-peer probe")
 			if writeErr := writeCSTPFrame(connection, cstpPacketDPDResponse, frame.payload); writeErr != nil {
 				return writeErr
 			}
+		case cstpPacketCompressed:
+			g.record("cstp-compressed", g.scenario.Compression)
 		case cstpPacketKeepalive:
 			continue
 		case cstpPacketDisconnect:
@@ -336,8 +398,7 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 	}
 }
 
-func (g *Gateway) writeConnectResponse(connection net.Conn) error {
-	configuration := g.scenario.Configuration
+func (g *Gateway) writeConnectResponse(connection net.Conn, configuration NetworkConfiguration) error {
 	var response strings.Builder
 	response.WriteString("HTTP/1.1 200 CONNECTED\r\n")
 	response.WriteString("X-CSTP-Version: 1\r\n")
@@ -365,6 +426,52 @@ func (g *Gateway) writeConnectResponse(connection net.Conn) error {
 		}
 		response.WriteString(address.String())
 		response.WriteString("\r\n")
+	}
+	for _, prefix := range configuration.Routes {
+		if prefix.Addr().Is4() {
+			response.WriteString("X-CSTP-Split-Include: ")
+		} else {
+			response.WriteString("X-CSTP-Split-Include-IP6: ")
+		}
+		response.WriteString(prefix.String())
+		response.WriteString("\r\n")
+	}
+	for _, prefix := range configuration.ExcludedRoutes {
+		if prefix.Addr().Is4() {
+			response.WriteString("X-CSTP-Split-Exclude: ")
+		} else {
+			response.WriteString("X-CSTP-Split-Exclude-IP6: ")
+		}
+		response.WriteString(prefix.String())
+		response.WriteString("\r\n")
+	}
+	for _, domain := range configuration.SearchDomains {
+		response.WriteString("X-CSTP-Default-Domain: ")
+		response.WriteString(domain)
+		response.WriteString("\r\n")
+	}
+	for _, domain := range configuration.SplitDNS {
+		response.WriteString("X-CSTP-Split-DNS: ")
+		response.WriteString(domain)
+		response.WriteString("\r\n")
+	}
+	if configuration.Banner != "" {
+		response.WriteString("X-CSTP-Banner: ")
+		response.WriteString(configuration.Banner)
+		response.WriteString("\r\n")
+	}
+	if configuration.TunnelAllDNS {
+		response.WriteString("X-CSTP-Tunnel-All-DNS: true\r\n")
+	}
+	if g.scenario.Compression != "" {
+		response.WriteString("X-CSTP-Content-Encoding: ")
+		response.WriteString(g.scenario.Compression)
+		response.WriteString("\r\n")
+	}
+	if g.scenario.CSTP.RekeyInterval > 0 {
+		response.WriteString("X-CSTP-Rekey-Time: ")
+		response.WriteString(strconv.FormatInt(int64(g.scenario.CSTP.RekeyInterval/time.Second), 10))
+		response.WriteString("\r\nX-CSTP-Rekey-Method: new-tunnel\r\n")
 	}
 	if g.scenario.ModernDTLS {
 		_, port, err := net.SplitHostPort(g.dtlsListener.Addr().String())
@@ -422,11 +529,28 @@ func writeHTTPRejection(writer net.Conn, status int) error {
 }
 
 func cloneScenario(scenario Scenario) Scenario {
-	scenario.Configuration.Addresses = append([]netip.Prefix(nil), scenario.Configuration.Addresses...)
-	scenario.Configuration.DNS = append([]netip.Addr(nil), scenario.Configuration.DNS...)
+	scenario.Configuration = cloneNetworkConfiguration(scenario.Configuration)
+	if scenario.CSTP.ReconnectConfiguration != nil {
+		configuration := cloneNetworkConfiguration(*scenario.CSTP.ReconnectConfiguration)
+		scenario.CSTP.ReconnectConfiguration = &configuration
+	}
+	scenario.CSTP.CompressedPackets = make([][]byte, len(scenario.CSTP.CompressedPackets))
+	for index := range scenario.CSTP.CompressedPackets {
+		scenario.CSTP.CompressedPackets[index] = append([]byte(nil), scenario.CSTP.CompressedPackets[index]...)
+	}
 	scenario.Authentication.ChallengeResponses = append([]string(nil), scenario.Authentication.ChallengeResponses...)
 	scenario.Authentication.ClientCertificateAuthority = append([]byte(nil), scenario.Authentication.ClientCertificateAuthority...)
 	return scenario
+}
+
+func cloneNetworkConfiguration(configuration NetworkConfiguration) NetworkConfiguration {
+	configuration.Addresses = append([]netip.Prefix(nil), configuration.Addresses...)
+	configuration.Routes = append([]netip.Prefix(nil), configuration.Routes...)
+	configuration.ExcludedRoutes = append([]netip.Prefix(nil), configuration.ExcludedRoutes...)
+	configuration.DNS = append([]netip.Addr(nil), configuration.DNS...)
+	configuration.SearchDomains = append([]string(nil), configuration.SearchDomains...)
+	configuration.SplitDNS = append([]string(nil), configuration.SplitDNS...)
+	return configuration
 }
 
 func newFakeGatewayTLS() (*tls.Config, *x509.CertPool, error) {

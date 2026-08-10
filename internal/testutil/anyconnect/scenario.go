@@ -15,17 +15,26 @@ const (
 
 // NetworkConfiguration is the network state advertised by a fake gateway.
 type NetworkConfiguration struct {
-	Addresses []netip.Prefix
-	DNS       []netip.Addr
-	MTU       uint16
+	Addresses      []netip.Prefix
+	Routes         []netip.Prefix
+	ExcludedRoutes []netip.Prefix
+	DNS            []netip.Addr
+	SearchDomains  []string
+	SplitDNS       []string
+	Banner         string
+	TunnelAllDNS   bool
+	MTU            uint16
 }
 
 // CSTPFaults controls one deliberate protocol failure in a scenario.
 type CSTPFaults struct {
-	RejectStatus        int
-	ResponseChunkSize   int
-	MalformedDataHeader bool
-	ResponseDelay       time.Duration
+	RejectStatus           int
+	ResponseChunkSize      int
+	MalformedDataHeader    bool
+	CompressedPackets      [][]byte
+	ReconnectConfiguration *NetworkConfiguration
+	RekeyInterval          time.Duration
+	ResponseDelay          time.Duration
 }
 
 // AuthenticationScenario controls the deterministic XMLPOST authentication
@@ -52,6 +61,7 @@ type Scenario struct {
 	Configuration  NetworkConfiguration
 	Authentication AuthenticationScenario
 	ModernDTLS     bool
+	Compression    string
 	CSTP           CSTPFaults
 }
 
@@ -92,6 +102,19 @@ func (s Scenario) Validate() error {
 			validationErrors = append(validationErrors, fmt.Errorf("invalid DNS address: %s", address))
 		}
 	}
+	for _, prefix := range append(append([]netip.Prefix(nil), s.Configuration.Routes...), s.Configuration.ExcludedRoutes...) {
+		if !prefix.IsValid() {
+			validationErrors = append(validationErrors, fmt.Errorf("invalid tunnel route: %s", prefix))
+		}
+	}
+	for _, value := range append(append([]string(nil), s.Configuration.SearchDomains...), s.Configuration.SplitDNS...) {
+		if strings.TrimSpace(value) == "" || strings.ContainsAny(value, "\x00\r\n") {
+			validationErrors = append(validationErrors, errors.New("tunnel DNS domain is invalid"))
+		}
+	}
+	if strings.ContainsAny(s.Configuration.Banner, "\x00\r\n") {
+		validationErrors = append(validationErrors, errors.New("tunnel banner contains an invalid header character"))
+	}
 	if s.Configuration.MTU == 0 || uint32(s.Configuration.MTU) > maximumCSTPMTU {
 		validationErrors = append(validationErrors, fmt.Errorf("tunnel MTU must be between 1 and %d", maximumCSTPMTU))
 	}
@@ -103,6 +126,28 @@ func (s Scenario) Validate() error {
 	}
 	if s.CSTP.ResponseDelay < 0 {
 		validationErrors = append(validationErrors, errors.New("CSTP response delay cannot be negative"))
+	}
+	if s.CSTP.RekeyInterval < 0 || s.CSTP.RekeyInterval%time.Second != 0 {
+		validationErrors = append(validationErrors, errors.New("CSTP rekey interval must be a non-negative whole number of seconds"))
+	}
+	if s.Compression != "" && s.Compression != "lzs" && s.Compression != "oc-lz4" {
+		validationErrors = append(validationErrors, errors.New("compression must be lzs or oc-lz4"))
+	}
+	if len(s.CSTP.CompressedPackets) > 0 && s.Compression == "" {
+		validationErrors = append(validationErrors, errors.New("compressed packets require negotiated compression"))
+	}
+	if configuration := s.CSTP.ReconnectConfiguration; configuration != nil {
+		if len(configuration.Addresses) == 0 {
+			validationErrors = append(validationErrors, errors.New("reconnect configuration requires a tunnel address"))
+		}
+		for _, prefix := range configuration.Addresses {
+			if !prefix.IsValid() || prefix.Addr().IsUnspecified() {
+				validationErrors = append(validationErrors, fmt.Errorf("invalid reconnect tunnel address: %s", prefix))
+			}
+		}
+		if configuration.MTU == 0 || uint32(configuration.MTU) > maximumCSTPMTU {
+			validationErrors = append(validationErrors, fmt.Errorf("reconnect tunnel MTU must be between 1 and %d", maximumCSTPMTU))
+		}
 	}
 	if s.Authentication.Enabled {
 		if s.Authentication.Username == "" || s.Authentication.Password == "" {
