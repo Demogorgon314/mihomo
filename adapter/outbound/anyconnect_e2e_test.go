@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +43,32 @@ type anyConnectBlockingReconnectDialer struct {
 	access           sync.Mutex
 	attempts         int
 	reconnectStarted chan struct{}
+}
+
+type anyConnectSwitchingDialer struct {
+	access           sync.Mutex
+	attempts         int
+	alternateAddress string
+}
+
+func (d *anyConnectSwitchingDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	d.access.Lock()
+	d.attempts++
+	if d.attempts > 1 {
+		address = d.alternateAddress
+	}
+	d.access.Unlock()
+	return (&net.Dialer{}).DialContext(ctx, network, address)
+}
+
+func (*anyConnectSwitchingDialer) ListenPacket(context.Context, string, string, netip.AddrPort) (net.PacketConn, error) {
+	return nil, errors.New("unexpected UDP underlay")
+}
+
+func (d *anyConnectSwitchingDialer) count() int {
+	d.access.Lock()
+	defer d.access.Unlock()
+	return d.attempts
 }
 
 func (d *anyConnectBlockingReconnectDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -511,11 +538,11 @@ func TestAnyConnectRemoteDNSUsesTunnelAndOverridePrecedence(t *testing.T) {
 	writeAnyConnectEvidence(t, "dns", "server-and-override-private-dns", []testanyconnect.Capability{testanyconnect.CapabilityPrivateDNS})
 }
 
-func TestAnyConnectReconnectKeepsGenerationAndUDPFlow(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+func TestAnyConnectRekeyAndEOFKeepGenerationAndUDPFlow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	scenario := testanyconnect.BasicCSTPScenario()
-	scenario.CSTP.RekeyInterval = 4 * time.Second
+	scenario.CSTP.RekeyInterval = 2 * time.Second
 	peerAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
@@ -531,7 +558,6 @@ func TestAnyConnectReconnectKeepsGenerationAndUDPFlow(t *testing.T) {
 	dialer := new(anyConnectRecordingDialer)
 	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *AnyConnectOption) {
 		option.ReconnectTimeout = 5
-		option.DPDInterval = 2
 	})
 	defer func() { _ = outbound.Close() }()
 	session, err := outbound.run(ctx)
@@ -552,13 +578,6 @@ func TestAnyConnectReconnectKeepsGenerationAndUDPFlow(t *testing.T) {
 		exchangeAnyConnectUDP(t, ctx, connection, destination, payload)
 	}
 	exchange("before reconnect")
-	for countRecords(recorder.Records(), "cstp-dpd") == 0 {
-		select {
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
 	for countRecords(recorder.Records(), "cstp-connect") < 2 {
 		select {
 		case <-ctx.Done():
@@ -591,19 +610,91 @@ func TestAnyConnectReconnectKeepsGenerationAndUDPFlow(t *testing.T) {
 		t.Fatal("same network identity replaced the session or stack generation during reconnect")
 	}
 	exchange("after reconnect")
-	writeAnyConnectEvidence(t, "reconnect", scenario.Name+"-dpd-rekey-eof", []testanyconnect.Capability{
-		testanyconnect.CapabilityDPD,
+	writeAnyConnectEvidence(t, "reconnect", scenario.Name+"-rekey-eof", []testanyconnect.Capability{
 		testanyconnect.CapabilityRekey,
 		testanyconnect.CapabilityReconnect,
 	})
 }
 
-func TestAnyConnectReconnectReplacesChangedNetworkGeneration(t *testing.T) {
+func TestAnyConnectDPDBlackholeKeepsGenerationAndUDPFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	scenario := testanyconnect.BasicCSTPScenario()
+	scenario.CSTP.BlackholeDPD = true
+	peerAddress := netip.MustParseAddr("192.0.2.1")
+	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = peer.Close() }()
+	recorder := testanyconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = gateway.Close() }()
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+		option.ReconnectTimeout = 5
+		option.DPDInterval = 1
+	})
+	defer func() { _ = outbound.Close() }()
+	session, err := outbound.run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, _, err := session.currentDevice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
+	exchangeAnyConnectUDP(t, ctx, connection, destination, "before DPD blackhole")
+	for countRecords(recorder.Records(), "cstp-connect") < 2 {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if blackholed := countRecords(recorder.Records(), "cstp-dpd-blackhole"); blackholed < 2 {
+		t.Fatalf("sustained DPD blackhole did not consume repeated probes: %d", blackholed)
+	}
+	if _, err := session.client.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	currentDevice, _, err := session.currentDevice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentDevice != device {
+		t.Fatal("DPD recovery replaced an unchanged stack generation")
+	}
+	exchangeAnyConnectUDP(t, ctx, connection, destination, "after DPD blackhole recovery")
+	for countRecords(recorder.Records(), "cstp-dpd") == 0 {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	writeAnyConnectEvidence(t, "dpd-blackhole", scenario.Name+"-dpd-blackhole", []testanyconnect.Capability{
+		testanyconnect.CapabilityDPD,
+		testanyconnect.CapabilityReconnect,
+	})
+}
+
+func TestAnyConnectReconnectReplacesChangedMTUGeneration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	scenario := testanyconnect.BasicCSTPScenario()
+	scenario.Configuration.Routes = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	scenario.Configuration.ExcludedRoutes = []netip.Prefix{netip.MustParsePrefix("198.18.0.0/15")}
 	reconfigured := scenario.Configuration
-	reconfigured.Addresses = []netip.Prefix{netip.MustParsePrefix("198.51.100.2/24")}
+	reconfigured.MTU = 1280
 	scenario.CSTP.ReconnectConfiguration = &reconfigured
 	peerAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
@@ -653,8 +744,11 @@ func TestAnyConnectReconnectReplacesChangedNetworkGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if configuration.Addresses[0] != reconfigured.Addresses[0] || secondDevice == firstDevice {
-		t.Fatalf("changed network identity did not replace the stack: %#v", configuration.Addresses)
+	if configuration.Addresses[0] != reconfigured.Addresses[0] || configuration.MTU != uint32(reconfigured.MTU) || secondDevice == firstDevice {
+		t.Fatalf("changed network identity did not replace the stack: addresses=%#v mtu=%d", configuration.Addresses, configuration.MTU)
+	}
+	if !slices.Equal(configuration.Routes, reconfigured.Routes) || !slices.Equal(configuration.ExcludedRoutes, reconfigured.ExcludedRoutes) {
+		t.Fatalf("negotiated routes changed across reconfiguration: routes=%v excluded=%v", configuration.Routes, configuration.ExcludedRoutes)
 	}
 	if _, err := oldFlow.WriteTo([]byte("stale flow"), destination); err == nil {
 		t.Fatal("flow from the replaced generation remained usable")
@@ -666,6 +760,85 @@ func TestAnyConnectReconnectReplacesChangedNetworkGeneration(t *testing.T) {
 	}
 	defer newFlow.Close()
 	exchangeAnyConnectUDP(t, ctx, newFlow, destination, "after identity change")
+	writeAnyConnectEvidence(t, "network-change", scenario.Name+"-mtu-routes", []testanyconnect.Capability{
+		testanyconnect.CapabilityNetworkMTU,
+		testanyconnect.CapabilityRoutes,
+	})
+}
+
+func TestAnyConnectReconnectsAfterUnderlaySwitch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	scenario := testanyconnect.BasicCSTPScenario()
+	peerAddress := netip.MustParseAddr("192.0.2.1")
+	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = peer.Close() }()
+	primaryRecorder := testanyconnect.NewRecorder(scenario.Cookie)
+	primary, err := testanyconnect.StartGateway(ctx, scenario, peer, primaryRecorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = primary.Close() }()
+	secondaryRecorder := testanyconnect.NewRecorder(scenario.Cookie)
+	secondary, err := testanyconnect.StartGateway(ctx, scenario, peer, secondaryRecorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = secondary.Close() }()
+	dialer := &anyConnectSwitchingDialer{alternateAddress: secondary.Address()}
+	outbound := newFakeAnyConnectOutboundWithOption(t, primary, scenario, dialer, 0, func(option *AnyConnectOption) {
+		option.ReconnectTimeout = 5
+	})
+	defer func() { _ = outbound.Close() }()
+	session, err := outbound.run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, _, err := session.currentDevice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
+	exchangeAnyConnectUDP(t, ctx, connection, destination, "before underlay switch")
+	if closed := primary.DropCSTPConnections(); closed != 1 {
+		t.Fatalf("expected one primary CSTP connection, closed %d", closed)
+	}
+	for countRecords(secondaryRecorder.Records(), "cstp-connect") < 1 {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("tunnel did not reconnect through switched underlay: %v", ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if _, err := session.client.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	currentDevice, _, err := session.currentDevice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentDevice != device {
+		t.Fatal("same network identity replaced the stack after underlay switch")
+	}
+	exchangeAnyConnectUDP(t, ctx, connection, destination, "after underlay switch")
+	if attempts := dialer.count(); attempts != 2 {
+		t.Fatalf("underlay switch caused unexpected dial attempts: %d", attempts)
+	}
+	if countRecords(primaryRecorder.Records(), "cstp-connect") != 1 {
+		t.Fatalf("primary gateway was dialed after underlay switch: %v", primaryRecorder.Records())
+	}
+	writeAnyConnectEvidence(t, "underlay-switch", scenario.Name+"-underlay-switch", []testanyconnect.Capability{
+		testanyconnect.CapabilityReconnect,
+		testanyconnect.CapabilityUnderlay,
+	})
 }
 
 func TestAnyConnectReconnectTimeoutIsBounded(t *testing.T) {
@@ -1231,7 +1404,7 @@ func TestAnyConnectSessionStopsOnTunnelReadFailure(t *testing.T) {
 }
 
 func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	scenario := testanyconnect.BasicCSTPScenario()
 	scenario.Authentication = testanyconnect.AuthenticationScenario{
@@ -1240,11 +1413,14 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 		Password:          "phase2-password",
 		Challenge:         "Phase 2 challenge",
 		ChallengeResponse: "phase2-answer",
+		CookieUses:        1,
 	}
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	peerAddress := netip.MustParseAddr("192.0.2.1")
+	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = peer.Close() }()
 	recorder := testanyconnect.NewRecorder(scenario.Cookie, scenario.Authentication.Password, scenario.Authentication.ChallengeResponse)
 	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
 	if err != nil {
@@ -1264,9 +1440,31 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 		option.Password = scenario.Authentication.Password
 		option.AuthProvider = provider
 	})
-	if _, err := authenticated.run(ctx); err != nil {
+	authenticatedSession, err := authenticated.run(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if closed := gateway.DropCSTPConnections(); closed != 1 {
+		t.Fatalf("expected one authenticated CSTP connection, closed %d", closed)
+	}
+	for countRecords(recorder.Records(), "auth-complete") < 2 || countRecords(recorder.Records(), "cstp-connect") < 2 {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("cookie expiry did not trigger reauthentication: %v", recorder.Records())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if readySession, err := authenticated.run(ctx); err != nil {
+		t.Fatal(err)
+	} else if readySession != authenticatedSession {
+		t.Fatal("cookie reauthentication replaced the shared outbound session")
+	}
+	packetConnection, err := authenticated.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchangeAnyConnectUDP(t, ctx, packetConnection, &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}, "after cookie reauthentication")
+	_ = packetConnection.Close()
 	if err := authenticated.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -1316,7 +1514,10 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 	if len(rejectedRecorder.Records()) != recordCount {
 		t.Fatalf("latched auth failure caused another login: before=%d after=%d", recordCount, len(rejectedRecorder.Records()))
 	}
-	writeAnyConnectEvidence(t, "auth-outbound", scenario.Name+"-provider-and-rejection", []testanyconnect.Capability{testanyconnect.CapabilityAuth})
+	writeAnyConnectEvidence(t, "auth-outbound", scenario.Name+"-provider-reauthentication-and-rejection", []testanyconnect.Capability{
+		testanyconnect.CapabilityAuth,
+		testanyconnect.CapabilityReauth,
+	})
 }
 
 func TestAnyConnectHandshakeTimeoutIsLatched(t *testing.T) {
