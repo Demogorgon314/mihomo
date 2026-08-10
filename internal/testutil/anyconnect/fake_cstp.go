@@ -16,6 +16,7 @@ const (
 	cstpPacketDPDResponse  = byte(4)
 	cstpPacketDisconnect   = byte(5)
 	cstpPacketKeepalive    = byte(7)
+	cstpPacketCompressed   = byte(8)
 )
 
 var cstpMagic = [4]byte{'S', 'T', 'F', 1}

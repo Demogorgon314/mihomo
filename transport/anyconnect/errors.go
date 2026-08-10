@@ -14,11 +14,13 @@ import (
 var ErrInvalidConfig = errors.New("invalid anyconnect configuration")
 
 var (
-	ErrAuthRequired   = errors.New("anyconnect authentication provider is required")
-	ErrAuthRejected   = errors.New("anyconnect authentication was rejected")
-	ErrAuthProvider   = errors.New("anyconnect authentication provider failed")
-	ErrTLSRejected    = errors.New("anyconnect TLS verification failed")
-	ErrHostScanPolicy = errors.New("anyconnect host scan is disabled by policy")
+	ErrAuthRequired        = errors.New("anyconnect authentication provider is required")
+	ErrAuthRejected        = errors.New("anyconnect authentication was rejected")
+	ErrAuthProvider        = errors.New("anyconnect authentication provider failed")
+	ErrTLSRejected         = errors.New("anyconnect TLS verification failed")
+	ErrHostScanPolicy      = errors.New("anyconnect host scan is disabled by policy")
+	ErrDataChannelNotReady = openconnect.ErrDataChannelNotReady
+	ErrReconnectTimeout    = openconnect.ErrReconnectTimeout
 )
 
 func invalidConfig(message string) error {

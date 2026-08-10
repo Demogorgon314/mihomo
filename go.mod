@@ -128,7 +128,7 @@ require (
 	github.com/metacubex/yamux v0.0.0-20250918083631-dd5f17c0be49 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/oasisprotocol/deoxysii v0.0.0-20220228165953-2091330c22b7 // indirect
-	github.com/pierrec/lz4/v4 v4.1.27 // indirect
+	github.com/pierrec/lz4/v4 v4.1.27
 	github.com/pion/dtls/v3 v3.1.5
 	github.com/pires/go-proxyproto v0.8.0 // indirect
 	github.com/safchain/ethtool v0.3.0 // indirect

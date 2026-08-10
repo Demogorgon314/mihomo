@@ -47,10 +47,15 @@ func TestClientStaticCredentialsAndFormEntry(t *testing.T) {
 	if _, err := client.WaitReady(ctx); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case event := <-client.Events():
-		t.Fatalf("static authentication unexpectedly emitted an event: %#v", event)
-	default:
+	for {
+		select {
+		case event := <-client.Events():
+			if event.Type != EventNetworkConfig {
+				t.Fatalf("static authentication unexpectedly emitted an auth event: %#v", event)
+			}
+		default:
+			return
+		}
 	}
 }
 
