@@ -69,7 +69,7 @@ func TestClientCookieCSTP(t *testing.T) {
 		Cookie:               scenario.Cookie,
 		ServerName:           gateway.ServerName(),
 		CertificateAuthority: testanyconnect.RootCAPEM(),
-	}, dialer)
+	}, dialer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestClientCookieCSTP(t *testing.T) {
 		Cookie:          scenario.Cookie,
 		ServerName:      gateway.ServerName(),
 		PeerFingerprint: pin,
-	}, new(recordingDialer))
+	}, new(recordingDialer), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestClientRejectsInvalidConfigWithoutLeakingCookie(t *testing.T) {
 		{name: "invalid server name", config: Config{Server: "https://vpn.example", Cookie: secret, ServerName: "bad\nname"}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			_, err := NewClient(context.Background(), testCase.config, new(recordingDialer))
+			_, err := NewClient(context.Background(), testCase.config, new(recordingDialer), nil)
 			if err == nil {
 				t.Fatal("expected configuration error")
 			}
@@ -174,14 +174,14 @@ func TestClientRejectsInvalidConfigWithoutLeakingCookie(t *testing.T) {
 
 func TestClientRejectsMissingContextDialerAndInvalidCA(t *testing.T) {
 	config := Config{Server: "https://vpn.example", Cookie: "test-cookie"}
-	if _, err := NewClient(nil, config, new(recordingDialer)); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := NewClient(nil, config, new(recordingDialer), nil); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("expected invalid context error, got %v", err)
 	}
-	if _, err := NewClient(context.Background(), config, nil); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := NewClient(context.Background(), config, nil, nil); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("expected invalid dialer error, got %v", err)
 	}
 	config.CertificateAuthority = []byte("not PEM")
-	if _, err := NewClient(context.Background(), config, new(recordingDialer)); !errors.Is(err, ErrInvalidConfig) {
+	if _, err := NewClient(context.Background(), config, new(recordingDialer), nil); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("expected invalid CA error, got %v", err)
 	}
 }
@@ -218,7 +218,7 @@ func TestClientRejectsTLSFailures(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			caseContext, cancelCase := context.WithTimeout(ctx, 2*time.Second)
 			defer cancelCase()
-			client, clientErr := NewClient(caseContext, testCase.config, new(recordingDialer))
+			client, clientErr := NewClient(caseContext, testCase.config, new(recordingDialer), nil)
 			if clientErr != nil {
 				t.Fatal(clientErr)
 			}

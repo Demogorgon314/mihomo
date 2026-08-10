@@ -59,6 +59,20 @@ func TestParseAnyConnectRejectsInvalidOptions(t *testing.T) {
 			mapping["ca"] = "test CA"
 			mapping["peer-fingerprint"] = "sha256:0000"
 		}},
+		{name: "CA with skip verify", change: func(mapping map[string]any) {
+			mapping["ca"] = "test CA"
+			mapping["skip-cert-verify"] = true
+		}},
+		{name: "certificate without key", change: func(mapping map[string]any) { mapping["cert"] = "client certificate" }},
+		{name: "key password without key", change: func(mapping map[string]any) { mapping["key-password"] = "private-secret" }},
+		{name: "invalid token mode", change: func(mapping map[string]any) {
+			mapping["token-mode"] = "invalid"
+			mapping["token-secret"] = "private-secret"
+		}},
+		{name: "HOTP without counter persistence", change: func(mapping map[string]any) {
+			mapping["token-mode"] = "hotp"
+			mapping["token-secret"] = "AA"
+		}},
 		{name: "unsupported DTLS", change: func(mapping map[string]any) { mapping["dtls-mode"] = "auto" }},
 		{name: "negative timeout", change: func(mapping map[string]any) { mapping["handshake-timeout"] = -1 }},
 		{name: "small MTU", change: func(mapping map[string]any) { mapping["mtu"] = 575 }},

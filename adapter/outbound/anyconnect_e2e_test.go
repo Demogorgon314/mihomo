@@ -17,6 +17,7 @@ import (
 
 	C "github.com/metacubex/mihomo/constant"
 	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
+	ac "github.com/metacubex/mihomo/transport/anyconnect"
 )
 
 const (
@@ -31,6 +32,12 @@ type anyConnectRecordingDialer struct {
 	destinations []string
 	dialStarted  chan struct{}
 	dialOnce     sync.Once
+}
+
+type anyConnectAuthProviderFunc func(context.Context, ac.AuthChallenge) (ac.AuthResponse, error)
+
+func (f anyConnectAuthProviderFunc) Respond(ctx context.Context, challenge ac.AuthChallenge) (ac.AuthResponse, error) {
+	return f(ctx, challenge)
 }
 
 func (d *anyConnectRecordingDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -307,6 +314,95 @@ func TestAnyConnectSessionStopsOnTunnelReadFailure(t *testing.T) {
 	}
 }
 
+func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	scenario := testanyconnect.BasicCSTPScenario()
+	scenario.Authentication = testanyconnect.AuthenticationScenario{
+		Enabled:           true,
+		Username:          "phase2-user",
+		Password:          "phase2-password",
+		Challenge:         "Phase 2 challenge",
+		ChallengeResponse: "phase2-answer",
+	}
+	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := testanyconnect.NewRecorder(scenario.Cookie, scenario.Authentication.Password, scenario.Authentication.ChallengeResponse)
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = gateway.Close() }()
+	provider := anyConnectAuthProviderFunc(func(_ context.Context, challenge ac.AuthChallenge) (ac.AuthResponse, error) {
+		if challenge.Form == nil || len(challenge.Form.Fields) != 1 {
+			return ac.AuthResponse{}, errors.New("unexpected AnyConnect challenge")
+		}
+		field := challenge.Form.Fields[0]
+		return ac.AuthResponse{FormValues: map[string]string{field.SubmissionKey: scenario.Authentication.ChallengeResponse}}, nil
+	})
+	authenticated := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+		option.Cookie = ""
+		option.Username = scenario.Authentication.Username
+		option.Password = scenario.Authentication.Password
+		option.AuthProvider = provider
+	})
+	if _, err := authenticated.run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := authenticated.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rejectedScenario := scenario
+	rejectedScenario.Name = "missing-auth-provider"
+	rejectedRecorder := testanyconnect.NewRecorder(rejectedScenario.Cookie, rejectedScenario.Authentication.Password, rejectedScenario.Authentication.ChallengeResponse)
+	rejectedGateway, err := testanyconnect.StartGateway(ctx, rejectedScenario, peer, rejectedRecorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rejectedGateway.Close() }()
+	wrongCredentialProvider := anyConnectAuthProviderFunc(func(_ context.Context, challenge ac.AuthChallenge) (ac.AuthResponse, error) {
+		values := make(map[string]string)
+		if challenge.Form == nil {
+			return ac.AuthResponse{}, errors.New("unexpected browser challenge")
+		}
+		for _, field := range challenge.Form.Fields {
+			switch field.Name {
+			case "username":
+				values[field.SubmissionKey] = rejectedScenario.Authentication.Username
+			case "password":
+				values[field.SubmissionKey] = "wrong-password"
+			default:
+				values[field.SubmissionKey] = field.Value
+			}
+		}
+		return ac.AuthResponse{FormValues: values}, nil
+	})
+	rejected := newFakeAnyConnectOutboundWithOption(t, rejectedGateway, rejectedScenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+		option.Cookie = ""
+		option.AuthProvider = wrongCredentialProvider
+	})
+	defer func() { _ = rejected.Close() }()
+	_, firstErr := rejected.run(ctx)
+	if !errors.Is(firstErr, ac.ErrAuthRejected) || !ac.IsTerminal(firstErr) {
+		t.Fatalf("expected terminal auth-rejected error, got %v", firstErr)
+	}
+	if rejectedCount := countRecords(rejectedRecorder.Records(), "auth-reject"); rejectedCount != 1 {
+		t.Fatalf("credential rejection was retried: %d attempts", rejectedCount)
+	}
+	recordCount := len(rejectedRecorder.Records())
+	_, secondErr := rejected.run(ctx)
+	if secondErr != firstErr {
+		t.Fatalf("terminal authentication error was not latched: first=%v second=%v", firstErr, secondErr)
+	}
+	if len(rejectedRecorder.Records()) != recordCount {
+		t.Fatalf("latched auth failure caused another login: before=%d after=%d", recordCount, len(rejectedRecorder.Records()))
+	}
+	writeAnyConnectEvidence(t, "auth-outbound", scenario.Name+"-provider-and-rejection", []testanyconnect.Capability{testanyconnect.CapabilityAuth})
+}
+
 func TestAnyConnectHandshakeTimeoutIsLatched(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -343,6 +439,10 @@ func TestAnyConnectHandshakeTimeoutIsLatched(t *testing.T) {
 }
 
 func newFakeAnyConnectOutbound(t *testing.T, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int) *AnyConnect {
+	return newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, handshakeTimeout, nil)
+}
+
+func newFakeAnyConnectOutboundWithOption(t *testing.T, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int, mutate func(*AnyConnectOption)) *AnyConnect {
 	t.Helper()
 	_, portText, err := net.SplitHostPort(gateway.Address())
 	if err != nil {
@@ -352,7 +452,7 @@ func newFakeAnyConnectOutbound(t *testing.T, gateway *testanyconnect.Gateway, sc
 	if err != nil {
 		t.Fatal(err)
 	}
-	outbound, err := NewAnyConnect(AnyConnectOption{
+	option := AnyConnectOption{
 		BasicOption:      BasicOption{DialerForAPI: dialer},
 		Name:             "fake-anyconnect",
 		Server:           gateway.ServerName(),
@@ -362,7 +462,11 @@ func newFakeAnyConnectOutbound(t *testing.T, gateway *testanyconnect.Gateway, sc
 		ServerName:       gateway.ServerName(),
 		HandshakeTimeout: handshakeTimeout,
 		DTLSMode:         "off",
-	})
+	}
+	if mutate != nil {
+		mutate(&option)
+	}
+	outbound, err := NewAnyConnect(option)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,18 +484,25 @@ func countRecords(records []testanyconnect.Record, kind string) int {
 }
 
 func writeAnyConnectOutboundEvidence(t *testing.T, scenario string) {
+	writeAnyConnectEvidence(t, "outbound", scenario+"-tcp-udp-echo", []testanyconnect.Capability{
+		testanyconnect.CapabilityCookieCSTP,
+		testanyconnect.CapabilityPacketIPv4,
+	})
+}
+
+func writeAnyConnectEvidence(t *testing.T, suffix string, scenario string, capabilities []testanyconnect.Capability) {
 	t.Helper()
 	path := os.Getenv("MIHOMO_ANYCONNECT_MATRIX")
 	if path == "" {
 		return
 	}
 	extension := filepath.Ext(path)
-	path = strings.TrimSuffix(path, extension) + "-outbound" + extension
+	path = strings.TrimSuffix(path, extension) + "-" + suffix + extension
 	matrix := testanyconnect.NewCapabilityMatrix()
-	for _, capability := range []testanyconnect.Capability{testanyconnect.CapabilityCookieCSTP, testanyconnect.CapabilityPacketIPv4} {
+	for _, capability := range capabilities {
 		if err := matrix.Record(testanyconnect.Evidence{
 			Capability: capability,
-			Scenario:   scenario + "-tcp-udp-echo",
+			Scenario:   scenario,
 			Driver:     testanyconnect.DriverOutbound,
 			Gateway:    "fake",
 			Transport:  "cstp",

@@ -1,5 +1,5 @@
-github.com/Demogorgon314/sing-openconnect v0.0.0-20260810115017-609fb9d2c9d0 h1:LoX9sYfCWz7zU8rV+yI8xQhYrtrHbkHJZ/jIMGnDotc=
-github.com/Demogorgon314/sing-openconnect v0.0.0-20260810115017-609fb9d2c9d0/go.mod h1:4AKZLVcvY3r54UaK2Gbnm7aN8pOwdLz+y4EP0QFZ5Eg=
+github.com/Demogorgon314/sing-openconnect v0.0.0-20260810140111-3283e5bdaf04 h1:7Hg2LEuNPoT1zrypNAGiBkgoZyLXbx7zbDPILTj/e/k=
+github.com/Demogorgon314/sing-openconnect v0.0.0-20260810140111-3283e5bdaf04/go.mod h1:4AKZLVcvY3r54UaK2Gbnm7aN8pOwdLz+y4EP0QFZ5Eg=
 github.com/RyuaNerin/go-krypto v1.3.0 h1:smavTzSMAx8iuVlGb4pEwl9MD2qicqMzuXR2QWp2/Pg=
 github.com/RyuaNerin/go-krypto v1.3.0/go.mod h1:9R9TU936laAIqAmjcHo/LsaXYOZlymudOAxjaBf62UM=
 github.com/RyuaNerin/testingutil v0.1.0 h1:IYT6JL57RV3U2ml3dLHZsVtPOP6yNK7WUVdzzlpNrss=

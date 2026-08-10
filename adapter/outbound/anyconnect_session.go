@@ -34,8 +34,8 @@ type acClient interface {
 	Close() error
 }
 
-func newAnyConnectSession(runCtx context.Context, handshakeCtx context.Context, config ac.Config, dialer C.Dialer, name string) (*anyConnectSession, error) {
-	client, err := ac.NewClient(runCtx, config, dialer)
+func newAnyConnectSession(runCtx context.Context, handshakeCtx context.Context, config ac.Config, dialer C.Dialer, authProvider ac.AuthProvider, name string) (*anyConnectSession, error) {
+	client, err := ac.NewClient(runCtx, config, dialer, authProvider)
 	if err != nil {
 		return nil, fmt.Errorf("create AnyConnect client: %w", err)
 	}
