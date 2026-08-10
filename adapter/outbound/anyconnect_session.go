@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
+	"slices"
 	"sync"
 
+	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
 	ac "github.com/metacubex/mihomo/transport/anyconnect"
@@ -15,11 +18,28 @@ import (
 	wireguard "github.com/metacubex/sing-wireguard"
 )
 
-type anyConnectSession struct {
-	client        acClient
+type anyConnectGeneration struct {
 	device        wireguard.Device
+	resolver      resolver.Resolver
 	configuration ac.NetworkConfig
-	cancel        context.CancelFunc
+}
+
+type anyConnectSession struct {
+	client acClient
+	ctx    context.Context
+	cancel context.CancelFunc
+	name   string
+
+	resolverFactory func(configuration ac.NetworkConfig) (resolver.Resolver, error)
+
+	access        sync.RWMutex
+	generation    *anyConnectGeneration
+	configuration ac.NetworkConfig
+	stopped       bool
+
+	initialOnce sync.Once
+	initialDone chan struct{}
+	initialErr  error
 
 	stopOnce sync.Once
 	wait     sync.WaitGroup
@@ -29,79 +49,223 @@ type anyConnectSession struct {
 }
 
 type acClient interface {
+	WaitReady(ctx context.Context) (ac.NetworkConfig, error)
 	ReadPacket(ctx context.Context) ([]byte, error)
 	WritePacket(packet []byte) error
 	Close() error
 }
 
-func newAnyConnectSession(runCtx context.Context, handshakeCtx context.Context, config ac.Config, dialer C.Dialer, authProvider ac.AuthProvider, name string) (*anyConnectSession, error) {
-	client, err := ac.NewClient(runCtx, config, dialer, authProvider)
-	if err != nil {
-		return nil, fmt.Errorf("create AnyConnect client: %w", err)
-	}
-	if err := client.Start(); err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("start AnyConnect client: %w", err)
-	}
-	configuration, err := client.WaitReady(handshakeCtx)
-	if err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("connect AnyConnect server: %w", err)
-	}
-	if len(configuration.Addresses) == 0 {
-		_ = client.Close()
-		return nil, errors.New("AnyConnect server did not assign an IPv4 address")
-	}
-	mtu := configuration.MTU
-	if mtu == 0 {
-		mtu = 1400
-	}
-	device, err := wireguard.NewStackDevice(configuration.Addresses, mtu)
-	if err != nil {
-		_ = client.Close()
-		return nil, fmt.Errorf("create AnyConnect stack device: %w", err)
-	}
-	if err := device.Start(); err != nil {
-		_ = device.Close()
-		_ = client.Close()
-		return nil, fmt.Errorf("start AnyConnect stack device: %w", err)
-	}
+func newAnyConnectSession(
+	runCtx context.Context,
+	handshakeCtx context.Context,
+	config ac.Config,
+	dialer C.Dialer,
+	authProvider ac.AuthProvider,
+	resolverFactory func(configuration ac.NetworkConfig) (resolver.Resolver, error),
+	name string,
+) (*anyConnectSession, error) {
 	sessionCtx, cancel := context.WithCancel(runCtx)
 	session := &anyConnectSession{
-		client:        client,
-		device:        device,
-		configuration: configuration,
-		cancel:        cancel,
-		done:          make(chan struct{}),
+		ctx:             sessionCtx,
+		cancel:          cancel,
+		name:            name,
+		resolverFactory: resolverFactory,
+		initialDone:     make(chan struct{}),
+		done:            make(chan struct{}),
 	}
-	session.wait.Add(2)
-	go session.stackToTunnel(sessionCtx, name)
-	go session.tunnelToStack(sessionCtx, name)
+	config.OnNetworkConfig = session.applyNetworkConfig
+	client, err := ac.NewClient(runCtx, config, dialer, authProvider)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("create AnyConnect client: %w", err)
+	}
+	session.client = client
+	session.wait.Add(1)
+	go session.runTunnelToStack()
 	go func() {
 		session.wait.Wait()
 		close(session.done)
 	}()
-	log.Debugln("[AnyConnect](%s) tunnel ready: addresses=%v mtu=%d transport=%s", name, configuration.Addresses, mtu, client.ActiveTransport())
+	if err := client.Start(); err != nil {
+		_ = session.close()
+		return nil, fmt.Errorf("start AnyConnect client: %w", err)
+	}
+	if _, err := client.WaitReady(handshakeCtx); err != nil {
+		_ = session.close()
+		return nil, fmt.Errorf("connect AnyConnect server: %w", err)
+	}
+	select {
+	case <-handshakeCtx.Done():
+		_ = session.close()
+		return nil, handshakeCtx.Err()
+	case <-session.initialDone:
+	}
+	if session.initialErr != nil {
+		_ = session.close()
+		return nil, session.initialErr
+	}
+	configuration := session.configurationSnapshot()
+	log.Debugln("[AnyConnect](%s) tunnel ready: addresses=%v mtu=%d transport=%s", name, configuration.Addresses, configuration.MTU, configuration.ActiveTransport)
 	return session, nil
 }
 
-func (s *anyConnectSession) stackToTunnel(ctx context.Context, name string) {
+func (s *anyConnectSession) applyNetworkConfig(event ac.NetworkConfigEvent) error {
+	configuration, err := validateAnyConnectNetworkConfig(event.Config)
+	if err != nil {
+		s.signalInitial(err)
+		return err
+	}
+	remoteResolver, err := s.resolverFactory(configuration)
+	if err != nil {
+		s.signalInitial(err)
+		return err
+	}
+
+	s.access.RLock()
+	current := s.generation
+	var currentConfiguration ac.NetworkConfig
+	if current != nil {
+		currentConfiguration = current.configuration
+	}
+	stopped := s.stopped || s.ctx.Err() != nil
+	s.access.RUnlock()
+	if stopped {
+		return net.ErrClosed
+	}
+	if current != nil && sameAnyConnectNetworkIdentity(currentConfiguration, configuration) {
+		s.access.Lock()
+		if s.generation == current && !s.stopped {
+			current.configuration = configuration
+			current.resolver = remoteResolver
+			s.configuration = configuration
+		}
+		s.access.Unlock()
+		s.signalInitial(nil)
+		return nil
+	}
+
+	device, err := wireguard.NewStackDevice(configuration.Addresses, configuration.MTU)
+	if err != nil {
+		err = fmt.Errorf("create AnyConnect stack device: %w", err)
+		s.signalInitial(err)
+		return err
+	}
+	if err := device.Start(); err != nil {
+		_ = device.Close()
+		err = fmt.Errorf("start AnyConnect stack device: %w", err)
+		s.signalInitial(err)
+		return err
+	}
+	generation := &anyConnectGeneration{device: device, resolver: remoteResolver, configuration: configuration}
+
+	s.access.Lock()
+	if s.stopped || s.ctx.Err() != nil {
+		s.access.Unlock()
+		_ = device.Close()
+		return net.ErrClosed
+	}
+	previous := s.generation
+	s.generation = generation
+	s.configuration = configuration
+	s.wait.Add(1)
+	s.access.Unlock()
+	go s.stackToTunnel(generation)
+	if previous != nil {
+		_ = previous.device.Close()
+	}
+	s.signalInitial(nil)
+	log.Debugln("[AnyConnect](%s) applied %s network configuration: addresses=%v mtu=%d", s.name, event.Reason, configuration.Addresses, configuration.MTU)
+	return nil
+}
+
+func validateAnyConnectNetworkConfig(configuration ac.NetworkConfig) (ac.NetworkConfig, error) {
+	if len(configuration.Addresses) == 0 {
+		return ac.NetworkConfig{}, errors.New("AnyConnect server did not assign a tunnel address")
+	}
+	if configuration.MTU == 0 {
+		configuration.MTU = 1400
+	}
+	minimumMTU := uint32(576)
+	for _, prefix := range configuration.Addresses {
+		if !prefix.IsValid() || prefix.Addr().IsUnspecified() {
+			return ac.NetworkConfig{}, fmt.Errorf("AnyConnect server assigned an invalid tunnel address: %s", prefix)
+		}
+		if prefix.Addr().Is6() {
+			minimumMTU = 1280
+		}
+	}
+	if configuration.MTU < minimumMTU || configuration.MTU > 65535 {
+		return ac.NetworkConfig{}, fmt.Errorf("AnyConnect server assigned MTU %d outside %d..65535", configuration.MTU, minimumMTU)
+	}
+	return configuration, nil
+}
+
+func sameAnyConnectNetworkIdentity(left ac.NetworkConfig, right ac.NetworkConfig) bool {
+	if left.MTU != right.MTU || len(left.Addresses) != len(right.Addresses) {
+		return false
+	}
+	leftAddresses := append([]netip.Prefix(nil), left.Addresses...)
+	rightAddresses := append([]netip.Prefix(nil), right.Addresses...)
+	comparePrefix := func(left netip.Prefix, right netip.Prefix) int {
+		if comparison := left.Addr().Compare(right.Addr()); comparison != 0 {
+			return comparison
+		}
+		return left.Bits() - right.Bits()
+	}
+	slices.SortFunc(leftAddresses, comparePrefix)
+	slices.SortFunc(rightAddresses, comparePrefix)
+	return slices.Equal(leftAddresses, rightAddresses)
+}
+
+func (s *anyConnectSession) signalInitial(err error) {
+	s.initialOnce.Do(func() {
+		s.initialErr = err
+		close(s.initialDone)
+	})
+}
+
+func (s *anyConnectSession) currentDevice() (wireguard.Device, resolver.Resolver, error) {
+	s.access.RLock()
+	defer s.access.RUnlock()
+	if s.stopped || s.generation == nil {
+		return nil, nil, net.ErrClosed
+	}
+	return s.generation.device, s.generation.resolver, nil
+}
+
+func (s *anyConnectSession) configurationSnapshot() ac.NetworkConfig {
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.configuration
+}
+
+func (s *anyConnectSession) stackToTunnel(generation *anyConnectGeneration) {
 	defer s.wait.Done()
 	buffer := make([]byte, 64*1024)
 	buffers := [][]byte{buffer}
 	sizes := []int{0}
-	for ctx.Err() == nil {
-		_, err := s.device.Read(buffers, sizes, 0)
+	for s.ctx.Err() == nil {
+		_, err := generation.device.Read(buffers, sizes, 0)
 		if err != nil {
-			if ctx.Err() == nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, os.ErrClosed) {
-				log.Warnln("[AnyConnect](%s) stack read failed: %v", name, err)
+			if !s.isCurrent(generation) {
+				return
+			}
+			if s.ctx.Err() == nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, os.ErrClosed) {
+				log.Warnln("[AnyConnect](%s) stack read failed: %v", s.name, err)
 			}
 			s.stop(err)
 			return
 		}
-		if err := s.client.WritePacket(buffer[:sizes[0]]); err != nil {
-			if ctx.Err() == nil && !errors.Is(err, net.ErrClosed) {
-				log.Warnln("[AnyConnect](%s) tunnel write failed: %v", name, err)
+		if sizes[0] == 0 {
+			continue
+		}
+		current, err := s.writePacket(generation, buffer[:sizes[0]])
+		if !current {
+			return
+		}
+		if err != nil {
+			if s.ctx.Err() == nil && !errors.Is(err, net.ErrClosed) {
+				log.Warnln("[AnyConnect](%s) tunnel write failed: %v", s.name, err)
 			}
 			s.stop(err)
 			return
@@ -109,25 +273,94 @@ func (s *anyConnectSession) stackToTunnel(ctx context.Context, name string) {
 	}
 }
 
-func (s *anyConnectSession) tunnelToStack(ctx context.Context, name string) {
+func (s *anyConnectSession) writePacket(generation *anyConnectGeneration, packet []byte) (bool, error) {
+	for {
+		if _, err := s.client.WaitReady(s.ctx); err != nil {
+			return true, err
+		}
+		s.access.RLock()
+		if s.generation != generation || s.stopped {
+			s.access.RUnlock()
+			return false, nil
+		}
+		err := s.client.WritePacket(packet)
+		s.access.RUnlock()
+		if !errors.Is(err, ac.ErrDataChannelNotReady) {
+			return true, err
+		}
+	}
+}
+
+func (s *anyConnectSession) runTunnelToStack() {
 	defer s.wait.Done()
-	for ctx.Err() == nil {
-		packet, err := s.client.ReadPacket(ctx)
+	select {
+	case <-s.ctx.Done():
+		return
+	case <-s.initialDone:
+		if s.initialErr != nil {
+			return
+		}
+	}
+	for s.ctx.Err() == nil {
+		packet, err := s.client.ReadPacket(s.ctx)
 		if err != nil {
-			if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
-				log.Warnln("[AnyConnect](%s) tunnel read failed: %v", name, err)
+			if s.ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
+				log.Warnln("[AnyConnect](%s) tunnel read failed: %v", s.name, err)
 			}
 			s.stop(err)
 			return
 		}
-		if _, err := s.device.Write([][]byte{packet}, 0); err != nil {
-			if ctx.Err() == nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, os.ErrClosed) {
-				log.Warnln("[AnyConnect](%s) stack write failed: %v", name, err)
+		generation, configuration := s.currentGeneration()
+		if generation == nil {
+			s.stop(net.ErrClosed)
+			return
+		}
+		if !packetMatchesGeneration(packet, configuration) {
+			s.stop(errors.New("AnyConnect server sent a packet for an unconfigured address family"))
+			return
+		}
+		if _, err := generation.device.Write([][]byte{packet}, 0); err != nil {
+			if !s.isCurrent(generation) {
+				continue
+			}
+			if s.ctx.Err() == nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, os.ErrClosed) {
+				log.Warnln("[AnyConnect](%s) stack write failed: %v", s.name, err)
 			}
 			s.stop(err)
 			return
 		}
 	}
+}
+
+func packetMatchesGeneration(packet []byte, configuration ac.NetworkConfig) bool {
+	if len(packet) == 0 || uint32(len(packet)) > configuration.MTU {
+		return false
+	}
+	version := packet[0] >> 4
+	if version == 4 && len(packet) < 20 || version == 6 && len(packet) < 40 {
+		return false
+	}
+	for _, prefix := range configuration.Addresses {
+		if version == 4 && prefix.Addr().Is4() || version == 6 && prefix.Addr().Is6() {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *anyConnectSession) currentGeneration() (*anyConnectGeneration, ac.NetworkConfig) {
+	s.access.RLock()
+	defer s.access.RUnlock()
+	if s.generation == nil {
+		return nil, ac.NetworkConfig{}
+	}
+	return s.generation, s.generation.configuration
+}
+
+func (s *anyConnectSession) isCurrent(generation *anyConnectGeneration) bool {
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.generation == generation
 }
 
 func (s *anyConnectSession) stop(err error) {
@@ -140,7 +373,15 @@ func (s *anyConnectSession) stop(err error) {
 		s.errLock.Unlock()
 		s.cancel()
 		_ = s.client.Close()
-		_ = s.device.Close()
+		s.access.Lock()
+		s.stopped = true
+		generation := s.generation
+		s.generation = nil
+		s.access.Unlock()
+		if generation != nil {
+			_ = generation.device.Close()
+		}
+		s.signalInitial(err)
 	})
 }
 

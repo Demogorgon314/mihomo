@@ -138,6 +138,9 @@ cisco-client-compat = false
 dtls-psk = true
 dtls-legacy = false
 match-tls-dtls-ciphers = false
+compression = true
+compression-algo-priority = lzs:1000
+no-compress-limit = 64
 `
 	files := map[string][]byte{
 		"ocserv.conf":     []byte(configuration),
@@ -371,6 +374,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 		"ca":          string(certificatePEM),
 		"server-name": fakeGatewayServerName,
 		"dtls-mode":   "off",
+		"compression": "stateless",
 	}, adapter.WithDialerForAPI(&ocservOutboundDialer{tcpAddress: tcpAddress}))
 	if err != nil {
 		t.Fatal(err)
@@ -383,7 +387,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 		logs, _ := dockerOutput(ctx, "logs", containerID)
 		t.Fatalf("dial ocserv TCP echo through outbound: %v\n%s", err, logs)
 	}
-	tcpPayload := []byte("mihomo-ocserv-outbound-tcp")
+	tcpPayload := []byte(strings.Repeat("mihomo-ocserv-outbound-compression-", 24))
 	if _, err := tcpConnection.Write(tcpPayload); err != nil {
 		t.Fatal(err)
 	}
@@ -394,6 +398,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 	if string(tcpReply) != string(tcpPayload) {
 		t.Fatalf("unexpected ocserv TCP echo: %q", tcpReply)
 	}
+	waitForOCServCSTPCompression(t, ctx, containerID, "lzs")
 	if err := tcpConnection.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +450,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 	if err := authenticatedConnection.Close(); err != nil {
 		t.Fatal(err)
 	}
-	for _, capability := range []Capability{CapabilityCookieCSTP, CapabilityPacketIPv4} {
+	for _, capability := range []Capability{CapabilityCookieCSTP, CapabilityPacketIPv4, CapabilityCompression} {
 		if err := phase0CapabilityMatrix.Record(Evidence{
 			Capability: capability,
 			Scenario:   "cookie-cstp-tcp-udp-echo",
@@ -468,6 +473,29 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 		Passed:     true,
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func waitForOCServCSTPCompression(t *testing.T, ctx context.Context, containerID string, algorithm string) {
+	t.Helper()
+	waitContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var latest string
+	for {
+		output, err := dockerOutput(waitContext, "logs", containerID)
+		if err == nil {
+			latest = output
+			if strings.Contains(output, "selected CSTP compression method "+algorithm) && strings.Contains(output, "decompressed ") {
+				return
+			}
+		} else {
+			latest = err.Error()
+		}
+		select {
+		case <-waitContext.Done():
+			t.Fatalf("ocserv did not negotiate and receive outbound CSTP compression:\n%s", latest)
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 }
 
