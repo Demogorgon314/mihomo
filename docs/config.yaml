@@ -1392,6 +1392,50 @@ proxies: # socks5
     # routing-mark: 6666
     # ip-version: ipv4-prefer
 
+  # anyconnect (experimental until the selected capabilities pass a real Cisco gateway test)
+  - name: "anyconnect"
+    type: anyconnect
+    server: vpn.example.com
+    port: 443
+    # cookie: webvpn-cookie # use a pre-authenticated cookie, or configure username/password
+    username: user
+    password: pass
+    # authgroup: employees
+    # form-entries: # static answers for additional gateway forms
+    #   - form-id: login
+    #     name: secondary_password
+    #     value: answer
+    # ca: | # PEM CA bundle; ca, peer-fingerprint, and skip-cert-verify are mutually exclusive
+    #   -----BEGIN CERTIFICATE-----
+    #   MIIB...example
+    #   -----END CERTIFICATE-----
+    # peer-fingerprint: "sha256:..." # certificate pin used instead of CA trust
+    # server-name: vpn.example.com
+    # skip-cert-verify: false
+    # cert: | # client certificate PEM; cert and key must be configured together
+    # key: |
+    # key-password: ""
+    # token-mode: totp # totp or hotp; HOTP requires a persistent counter provider and is not accepted from YAML alone
+    # token-secret: ""
+    # dtls-mode: auto # off, auto, or require; auto falls back to CSTP
+    # legacy-dtls: false # enables Cisco DTLS 0.9 MD5/SHA-1/AES-CBC only when explicitly required
+    # compression: stateless # off, stateless, or all
+    # ipv6: false
+    # mtu: 0 # 0 uses the gateway value; IPv6 requires at least 1280
+    # base-mtu: 0
+    # queue-length: 0 # 0 uses the default; maximum 4096
+    # handshake-timeout: 0 # seconds
+    # dpd-interval: 0 # seconds
+    # reconnect-timeout: 0 # seconds
+    # remote-dns-resolve: false
+    # dns: [1.1.1.1] # IP literals only; requires remote-dns-resolve
+    # dialer-proxy: "ss1" # gateway underlay only; private DNS remains inside the tunnel
+    # tfo: false
+    # mptcp: false
+    # ip-version: dual # dual/ipv4/ipv6/ipv4-prefer/ipv6-prefer
+    # interface-name: "WLAN"
+    # routing-mark: 6666
+
   # openvpn
   - name: "openvpn"
     type: openvpn
