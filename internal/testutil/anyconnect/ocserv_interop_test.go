@@ -90,7 +90,7 @@ func TestOCServFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	testOCServCoreDriver(t, ctx, tcpAddress, udpAddress, roots)
-	testOCServOutboundDriver(t, ctx, containerID, tcpAddress, roots, certificatePEM)
+	testOCServOutboundDriver(t, ctx, containerID, tcpAddress, udpAddress, roots, certificatePEM)
 	for _, capability := range []Capability{CapabilityModernDTLS, CapabilityPacketIPv4} {
 		if err := phase0CapabilityMatrix.Record(Evidence{
 			Capability: capability,
@@ -246,10 +246,15 @@ type ocservDTLSDialer struct {
 
 type ocservOutboundDialer struct {
 	tcpAddress string
+	udpAddress string
 }
 
 func (d *ocservOutboundDialer) DialContext(ctx context.Context, network string, _ string) (net.Conn, error) {
-	return (&net.Dialer{}).DialContext(ctx, network, d.tcpAddress)
+	address := d.tcpAddress
+	if network == N.NetworkUDP {
+		address = d.udpAddress
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, address)
 }
 
 func (d *ocservOutboundDialer) ListenPacket(ctx context.Context, network string, address string, _ netip.AddrPort) (net.PacketConn, error) {
@@ -349,7 +354,7 @@ func testOCServCoreDriver(t *testing.T, ctx context.Context, tcpAddress string, 
 	}
 }
 
-func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID string, tcpAddress string, roots *x509.CertPool, certificatePEM []byte) {
+func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID string, tcpAddress string, udpAddress string, roots *x509.CertPool, certificatePEM []byte) {
 	t.Helper()
 	cookie, err := RunAuthProbe(ctx, AuthProbeOptions{
 		Address:    tcpAddress,
@@ -375,7 +380,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 		"server-name": fakeGatewayServerName,
 		"dtls-mode":   "off",
 		"compression": "stateless",
-	}, adapter.WithDialerForAPI(&ocservOutboundDialer{tcpAddress: tcpAddress}))
+	}, adapter.WithDialerForAPI(&ocservOutboundDialer{tcpAddress: tcpAddress, udpAddress: udpAddress}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,6 +431,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 	if err := proxy.Close(); err != nil {
 		t.Fatal(err)
 	}
+	testOCServDTLSOutbound(t, ctx, tcpAddress, udpAddress, port, roots, certificatePEM, target)
 	authenticatedProxy, err := adapter.ParseProxy(map[string]any{
 		"name":        "ocserv-anyconnect-authenticated",
 		"type":        "anyconnect",
@@ -437,7 +443,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 		"ca":          string(certificatePEM),
 		"server-name": fakeGatewayServerName,
 		"dtls-mode":   "off",
-	}, adapter.WithDialerForAPI(&ocservOutboundDialer{tcpAddress: tcpAddress}))
+	}, adapter.WithDialerForAPI(&ocservOutboundDialer{tcpAddress: tcpAddress, udpAddress: udpAddress}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,6 +475,78 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 		Driver:     DriverOutbound,
 		Gateway:    "ocserv-1.3.0-2",
 		Transport:  openconnect.TransportCSTP,
+		Address:    "ipv4",
+		Passed:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testOCServDTLSOutbound(t *testing.T, ctx context.Context, tcpAddress string, udpAddress string, port string, roots *x509.CertPool, certificatePEM []byte, target netip.Addr) {
+	t.Helper()
+	cookie, err := RunAuthProbe(ctx, AuthProbeOptions{
+		Address:    tcpAddress,
+		ServerName: fakeGatewayServerName,
+		RootCAs:    roots,
+		Username:   ocservUsername,
+		Password:   ocservPassword,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := adapter.ParseProxy(map[string]any{
+		"name":        "ocserv-anyconnect-dtls",
+		"type":        "anyconnect",
+		"server":      fakeGatewayServerName,
+		"port":        port,
+		"cookie":      cookie,
+		"ca":          string(certificatePEM),
+		"server-name": fakeGatewayServerName,
+		"dtls-mode":   "require",
+	}, adapter.WithDialerForAPI(&ocservOutboundDialer{tcpAddress: tcpAddress, udpAddress: udpAddress}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = proxy.Close() }()
+	tcpConnection, err := proxy.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: target, DstPort: 18080})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("mihomo-ocserv-modern-dtls-tcp")
+	if _, err := tcpConnection.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	reply := make([]byte, len(payload))
+	if _, err := io.ReadFull(tcpConnection, reply); err != nil {
+		t.Fatal(err)
+	}
+	if string(reply) != string(payload) {
+		t.Fatalf("unexpected ocserv DTLS TCP echo: %q", reply)
+	}
+	_ = tcpConnection.Close()
+	udpConnection, err := proxy.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: target, DstPort: 15353})
+	if err != nil {
+		t.Fatal(err)
+	}
+	udpTarget := &net.UDPAddr{IP: target.AsSlice(), Port: 15353}
+	if _, err := udpConnection.WriteTo([]byte("mihomo-ocserv-modern-dtls-udp"), udpTarget); err != nil {
+		t.Fatal(err)
+	}
+	udpReply := make([]byte, 128)
+	count, _, err := udpConnection.ReadFrom(udpReply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(udpReply[:count]) != "mihomo-ocserv-modern-dtls-udp" {
+		t.Fatalf("unexpected ocserv DTLS UDP echo: %q", udpReply[:count])
+	}
+	_ = udpConnection.Close()
+	if err := phase0CapabilityMatrix.Record(Evidence{
+		Capability: CapabilityModernDTLS,
+		Scenario:   "outbound-tcp-udp-modern-dtls",
+		Driver:     DriverOutbound,
+		Gateway:    "ocserv-1.3.0-2",
+		Transport:  openconnect.TransportDTLS,
 		Address:    "ipv4",
 		Passed:     true,
 	}); err != nil {

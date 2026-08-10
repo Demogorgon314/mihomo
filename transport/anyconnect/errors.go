@@ -21,6 +21,7 @@ var (
 	ErrHostScanPolicy      = errors.New("anyconnect host scan is disabled by policy")
 	ErrDataChannelNotReady = openconnect.ErrDataChannelNotReady
 	ErrReconnectTimeout    = openconnect.ErrReconnectTimeout
+	ErrDTLSRequired        = errors.New("anyconnect DTLS is required but unavailable")
 )
 
 func invalidConfig(message string) error {
