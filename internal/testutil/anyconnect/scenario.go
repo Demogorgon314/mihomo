@@ -61,6 +61,9 @@ type Scenario struct {
 	Configuration  NetworkConfiguration
 	Authentication AuthenticationScenario
 	ModernDTLS     bool
+	InjectedDTLS   bool
+	DTLSMTU        uint16
+	DTLSAppID      []byte
 	Compression    string
 	CSTP           CSTPFaults
 }
@@ -132,6 +135,15 @@ func (s Scenario) Validate() error {
 	}
 	if s.Compression != "" && s.Compression != "lzs" && s.Compression != "oc-lz4" {
 		validationErrors = append(validationErrors, errors.New("compression must be lzs or oc-lz4"))
+	}
+	if s.DTLSMTU != 0 && (!s.ModernDTLS || s.DTLSMTU < 576 || s.DTLSMTU > s.Configuration.MTU) {
+		validationErrors = append(validationErrors, errors.New("DTLS MTU requires modern DTLS and must be between 576 and the CSTP MTU"))
+	}
+	if len(s.DTLSAppID) > 0 && (!s.ModernDTLS || len(s.DTLSAppID) > 32) {
+		validationErrors = append(validationErrors, errors.New("DTLS App ID requires modern DTLS and cannot exceed 32 bytes"))
+	}
+	if s.InjectedDTLS && (!s.ModernDTLS || len(s.DTLSAppID) > 0) {
+		validationErrors = append(validationErrors, errors.New("injected DTLS requires modern DTLS without an App ID"))
 	}
 	if len(s.CSTP.CompressedPackets) > 0 && s.Compression == "" {
 		validationErrors = append(validationErrors, errors.New("compressed packets require negotiated compression"))

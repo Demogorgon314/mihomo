@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"net/netip"
 	"slices"
 	"strings"
@@ -56,29 +57,35 @@ type NetworkConfigEvent struct {
 
 // Client isolates the outbound package from sing-openconnect types.
 type Client struct {
-	core           *openconnect.Client
-	authProvider   AuthProvider
-	authCtx        context.Context
-	authCancel     context.CancelFunc
-	authDone       chan struct{}
-	events         chan Event
-	eventAccess    sync.Mutex
-	eventsClosed   bool
-	secretAccess   sync.Mutex
-	secrets        []string
-	errorAccess    sync.Mutex
-	authError      error
-	networkAccess  sync.Mutex
-	networkConfig  NetworkConfig
-	networkApplied bool
-	networkHandler func(NetworkConfigEvent) error
-	networkUpdated chan struct{}
-	networkError   error
-	closeOnce      sync.Once
-	closeErr       error
+	core                 *openconnect.Client
+	authProvider         AuthProvider
+	authCtx              context.Context
+	authCancel           context.CancelFunc
+	authDone             chan struct{}
+	events               chan Event
+	eventAccess          sync.Mutex
+	eventsClosed         bool
+	secretAccess         sync.Mutex
+	secrets              []string
+	errorAccess          sync.Mutex
+	authError            error
+	networkAccess        sync.Mutex
+	networkConfig        NetworkConfig
+	networkApplied       bool
+	networkHandler       func(NetworkConfigEvent) error
+	networkUpdated       chan struct{}
+	networkError         error
+	dtlsMode             string
+	transportAccess      sync.Mutex
+	dtlsReady            bool
+	transportError       error
+	transportMonitorOnce sync.Once
+	transportMonitorDone chan struct{}
+	closeOnce            sync.Once
+	closeErr             error
 }
 
-// NewClient creates a CSTP-only AnyConnect protocol client.
+// NewClient creates an AnyConnect protocol client with CSTP fallback.
 func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider AuthProvider) (*Client, error) {
 	if err := ValidateConfig(config, authProvider); err != nil {
 		return nil, err
@@ -141,14 +148,16 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	}
 	authCtx, authCancel := context.WithCancel(ctx)
 	client := &Client{
-		authProvider:   authProvider,
-		authCtx:        authCtx,
-		authCancel:     authCancel,
-		authDone:       make(chan struct{}),
-		events:         make(chan Event, 16),
-		secrets:        configSecrets(config),
-		networkHandler: config.OnNetworkConfig,
-		networkUpdated: make(chan struct{}),
+		authProvider:         authProvider,
+		authCtx:              authCtx,
+		authCancel:           authCancel,
+		authDone:             make(chan struct{}),
+		events:               make(chan Event, 16),
+		secrets:              configSecrets(config),
+		networkHandler:       config.OnNetworkConfig,
+		networkUpdated:       make(chan struct{}),
+		dtlsMode:             normalizeDTLSMode(config.DTLSMode),
+		transportMonitorDone: make(chan struct{}),
 	}
 	compressionDisabled := config.Compression == "" || config.Compression == CompressionOff
 	compressionMode := openconnect.CompressionModeStateless
@@ -163,7 +172,8 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		Password:            config.Password,
 		AuthGroup:           config.AuthGroup,
 		Token:               tokenOptions,
-		NoUDP:               true,
+		NoUDP:               normalizeDTLSMode(config.DTLSMode) == DTLSModeOff,
+		DTLSRequired:        normalizeDTLSMode(config.DTLSMode) == DTLSModeRequire,
 		CompressionDisabled: compressionDisabled,
 		CompressionMode:     compressionMode,
 		IPv6Disabled:        !config.IPv6,
@@ -222,13 +232,35 @@ func normalizeCookie(cookie string) string {
 	return "webvpn=" + cookie
 }
 
+func normalizeDTLSMode(mode string) string {
+	if mode == "" {
+		return DTLSModeAuto
+	}
+	return mode
+}
+
 func (c *Client) Start() error {
-	return c.core.Start()
+	if err := c.core.Start(); err != nil {
+		return err
+	}
+	c.transportMonitorOnce.Do(func() {
+		go c.runActiveTransportMonitor()
+	})
+	return nil
 }
 
 func (c *Client) WaitReady(ctx context.Context) (NetworkConfig, error) {
+	if err := c.transportFailure(); err != nil {
+		return NetworkConfig{}, err
+	}
 	configuration, err := c.core.WaitReady(ctx)
 	if err != nil {
+		if transportErr := c.transportFailure(); transportErr != nil {
+			return NetworkConfig{}, transportErr
+		}
+		if c.dtlsMode == DTLSModeRequire && c.core.ActiveTransport() == openconnect.TransportCSTP {
+			return NetworkConfig{}, fmt.Errorf("%w: %v", ErrDTLSRequired, err)
+		}
 		if authErr := c.authenticationError(); authErr != nil {
 			return NetworkConfig{}, authErr
 		}
@@ -239,12 +271,19 @@ func (c *Client) WaitReady(ctx context.Context) (NetworkConfig, error) {
 	if err := c.waitNetworkConfig(ctx, result); err != nil {
 		return NetworkConfig{}, err
 	}
+	if err := c.ensureDTLSTransport(ctx); err != nil {
+		return NetworkConfig{}, err
+	}
+	result.ActiveTransport = c.core.ActiveTransport()
 	return cloneNetworkConfig(result), nil
 }
 
 func (c *Client) ReadPacket(ctx context.Context) ([]byte, error) {
 	packet, err := c.core.ReadDataPacket(ctx)
 	if err != nil {
+		if transportErr := c.transportFailure(); transportErr != nil {
+			return nil, transportErr
+		}
 		return nil, err
 	}
 	if _, err := c.WaitReady(ctx); err != nil {
@@ -254,11 +293,77 @@ func (c *Client) ReadPacket(ctx context.Context) ([]byte, error) {
 }
 
 func (c *Client) WritePacket(packet []byte) error {
+	if err := c.ensureDTLSTransport(c.authCtx); err != nil {
+		return err
+	}
 	return c.core.WriteDataPacket(packet)
 }
 
 func (c *Client) ActiveTransport() string {
 	return c.core.ActiveTransport()
+}
+
+func (c *Client) runActiveTransportMonitor() {
+	defer close(c.transportMonitorDone)
+	lastTransport := ""
+	for {
+		updated := c.core.ActiveTransportUpdated()
+		transport := c.core.ActiveTransport()
+		c.observeActiveTransport(transport)
+		if transport != "" && transport != lastTransport {
+			c.publishEvent(Event{Type: EventActiveTransport, ActiveTransport: transport})
+		}
+		lastTransport = transport
+		select {
+		case <-c.authCtx.Done():
+			return
+		case <-updated:
+		}
+	}
+}
+
+func (c *Client) ensureDTLSTransport(ctx context.Context) error {
+	if c.dtlsMode != DTLSModeRequire {
+		return nil
+	}
+	for {
+		updated := c.core.ActiveTransportUpdated()
+		transport := c.core.ActiveTransport()
+		if err := c.observeActiveTransport(transport); err != nil {
+			return err
+		}
+		if transport == openconnect.TransportDTLS {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%w: %v", ErrDTLSRequired, ctx.Err())
+		case <-updated:
+		}
+	}
+}
+
+func (c *Client) observeActiveTransport(transport string) error {
+	c.transportAccess.Lock()
+	if transport == openconnect.TransportDTLS {
+		c.dtlsReady = true
+	}
+	failed := c.dtlsMode == DTLSModeRequire && c.dtlsReady && transport == openconnect.TransportCSTP && c.transportError == nil
+	if failed {
+		c.transportError = ErrDTLSRequired
+	}
+	err := c.transportError
+	c.transportAccess.Unlock()
+	if failed {
+		go func() { _ = c.core.Close() }()
+	}
+	return err
+}
+
+func (c *Client) transportFailure() error {
+	c.transportAccess.Lock()
+	defer c.transportAccess.Unlock()
+	return c.transportError
 }
 
 func (c *Client) handleNetworkConfigEvent(event openconnect.TunnelConfigurationEvent) error {
@@ -338,6 +443,8 @@ func (c *Client) Close() error {
 		c.authCancel()
 		c.closeErr = c.core.Close()
 		<-c.authDone
+		c.transportMonitorOnce.Do(func() { close(c.transportMonitorDone) })
+		<-c.transportMonitorDone
 		c.networkAccess.Lock()
 		c.networkError = openconnect.ErrClientClosed
 		c.signalNetworkUpdatedLocked()
