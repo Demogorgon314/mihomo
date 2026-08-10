@@ -747,11 +747,15 @@ func TestAnyConnectCloseStopsActiveReconnect(t *testing.T) {
 }
 
 func TestAnyConnectCSTPSoak(t *testing.T) {
-	runAnyConnectSoak(t, false)
+	runAnyConnectSoak(t, "")
+}
+
+func TestAnyConnectModernDTLSSoak(t *testing.T) {
+	runAnyConnectSoak(t, "modern")
 }
 
 func TestAnyConnectLegacyDTLSSoak(t *testing.T) {
-	runAnyConnectSoak(t, true)
+	runAnyConnectSoak(t, "legacy")
 }
 
 func TestAnyConnectReleaseStress(t *testing.T) {
@@ -846,8 +850,11 @@ func TestAnyConnectReleaseStress(t *testing.T) {
 	})
 }
 
-func runAnyConnectSoak(t *testing.T, legacyDTLS bool) {
+func runAnyConnectSoak(t *testing.T, dtlsTransport string) {
 	t.Helper()
+	if dtlsTransport != "" && dtlsTransport != "modern" && dtlsTransport != "legacy" {
+		t.Fatalf("unsupported AnyConnect soak transport %q", dtlsTransport)
+	}
 	if os.Getenv("MIHOMO_ANYCONNECT_SOAK") != "1" {
 		t.Skip("set MIHOMO_ANYCONNECT_SOAK=1 to run the accelerated AnyConnect soak")
 	}
@@ -857,7 +864,8 @@ func runAnyConnectSoak(t *testing.T, legacyDTLS bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), soakDuration+30*time.Second)
 	defer cancel()
 	scenario := testanyconnect.BasicCSTPScenario()
-	scenario.LegacyDTLS = legacyDTLS
+	scenario.ModernDTLS = dtlsTransport == "modern"
+	scenario.LegacyDTLS = dtlsTransport == "legacy"
 	peerAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
@@ -874,8 +882,8 @@ func runAnyConnectSoak(t *testing.T, legacyDTLS bool) {
 		option.ReconnectTimeout = 5
 		option.DPDInterval = 30
 		option.QueueLength = 64
-		option.LegacyDTLS = legacyDTLS
-		if legacyDTLS {
+		option.LegacyDTLS = scenario.LegacyDTLS
+		if dtlsTransport != "" {
 			option.DTLSMode = ac.DTLSModeAuto
 			option.DPDInterval = 2
 		}
@@ -889,7 +897,7 @@ func runAnyConnectSoak(t *testing.T, legacyDTLS bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if legacyDTLS {
+	if dtlsTransport != "" {
 		waitAnyConnectTransport(t, ctx, session, "dtls")
 	}
 	udpConnection, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
@@ -936,7 +944,7 @@ func runAnyConnectSoak(t *testing.T, legacyDTLS bool) {
 
 		now := time.Now()
 		if !now.Before(nextReconnect) {
-			if legacyDTLS {
+			if dtlsTransport == "legacy" {
 				legacyHandshakes := countRecords(recorder.Records(), "legacy-dtls-handshake")
 				gateway.SetDTLSBlackhole(true)
 				waitAnyConnectTransport(t, ctx, session, "cstp")
@@ -948,6 +956,12 @@ func runAnyConnectSoak(t *testing.T, legacyDTLS bool) {
 					case <-time.After(10 * time.Millisecond):
 					}
 				}
+				waitAnyConnectTransport(t, ctx, session, "dtls")
+			} else if dtlsTransport == "modern" {
+				if closed := gateway.DropDTLSConnections(); closed != 1 {
+					t.Fatalf("soak expected one active modern DTLS connection, closed %d", closed)
+				}
+				waitAnyConnectTransport(t, ctx, session, "cstp")
 				waitAnyConnectTransport(t, ctx, session, "dtls")
 			} else {
 				before, _ := dialer.counts()
@@ -977,17 +991,17 @@ func runAnyConnectSoak(t *testing.T, legacyDTLS bool) {
 		}
 		if !now.Before(nextResourceCheck) {
 			if current := runtime.NumGoroutine(); current > activeGoroutines+8 {
-				t.Fatalf("CSTP soak goroutines grew from %d to %d", activeGoroutines, current)
+				t.Fatalf("AnyConnect soak goroutines grew from %d to %d", activeGoroutines, current)
 			}
 			if current := countAnyConnectFileDescriptors(); activeFDs >= 0 && current > activeFDs+4 {
-				t.Fatalf("CSTP soak file descriptors grew from %d to %d", activeFDs, current)
+				t.Fatalf("AnyConnect soak file descriptors grew from %d to %d", activeFDs, current)
 			}
 			nextResourceCheck = nextResourceCheck.Add(10 * time.Second)
 		}
 	}
 	connections, _ := dialer.counts()
 	expectedConnections := reconnects + 1
-	if legacyDTLS {
+	if dtlsTransport != "" {
 		expectedConnections = 1
 	}
 	if connections != expectedConnections {
