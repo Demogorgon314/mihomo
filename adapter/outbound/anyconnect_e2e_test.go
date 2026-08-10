@@ -3,8 +3,10 @@
 package outbound
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -752,6 +754,98 @@ func TestAnyConnectLegacyDTLSSoak(t *testing.T) {
 	runAnyConnectSoak(t, true)
 }
 
+func TestAnyConnectReleaseStress(t *testing.T) {
+	if os.Getenv("MIHOMO_ANYCONNECT_STRESS") != "1" {
+		t.Skip("set MIHOMO_ANYCONNECT_STRESS=1 to run the AnyConnect release stress test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	scenario := testanyconnect.BasicCSTPScenario()
+	peerAddress := netip.MustParseAddr("192.0.2.1")
+	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = peer.Close() }()
+	recorder := testanyconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = gateway.Close() }()
+
+	t.Run("concurrent UDP flows", func(t *testing.T) {
+		outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+			option.QueueLength = 4096
+		})
+		defer func() { _ = outbound.Close() }()
+		if _, err := outbound.run(ctx); err != nil {
+			t.Fatal(err)
+		}
+		baselineGoroutines := runtime.NumGoroutine()
+		baselineFDs := countAnyConnectFileDescriptors()
+		for _, count := range []int{1, 100, 1000} {
+			t.Run(strconv.Itoa(count), func(t *testing.T) {
+				errorsFound := make(chan error, count)
+				var wait sync.WaitGroup
+				wait.Add(count)
+				for index := range count {
+					go func() {
+						defer wait.Done()
+						connection, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+						if err != nil {
+							errorsFound <- err
+							return
+						}
+						defer connection.Close()
+						payload := []byte("flow-" + strconv.Itoa(index))
+						destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
+						_ = connection.SetDeadline(time.Now().Add(time.Minute))
+						if _, err := connection.WriteTo(payload, destination); err != nil {
+							errorsFound <- err
+							return
+						}
+						reply := make([]byte, len(payload))
+						read, _, err := connection.ReadFrom(reply)
+						if err != nil {
+							errorsFound <- err
+							return
+						}
+						if read != len(payload) || !bytes.Equal(reply, payload) {
+							errorsFound <- fmt.Errorf("unexpected UDP flow %d reply: %q", index, reply[:read])
+						}
+					}()
+				}
+				wait.Wait()
+				close(errorsFound)
+				for err := range errorsFound {
+					t.Fatal(err)
+				}
+			})
+		}
+		waitForAnyConnectResourceCeiling(t, "concurrent flow stress", baselineGoroutines, baselineFDs, 8, 2)
+	})
+
+	t.Run("startup close cycles", func(t *testing.T) {
+		baseline := countRecords(recorder.Records(), "cstp-connect")
+		baselineGoroutines := runtime.NumGoroutine()
+		baselineFDs := countAnyConnectFileDescriptors()
+		for range 20 {
+			outbound := newFakeAnyConnectOutbound(t, gateway, scenario, new(anyConnectRecordingDialer), 0)
+			if _, err := outbound.run(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := outbound.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if connections := countRecords(recorder.Records(), "cstp-connect") - baseline; connections != 20 {
+			t.Fatalf("startup/close cycles created %d CSTP sessions", connections)
+		}
+		waitForAnyConnectResourceCeiling(t, "startup/close stress", baselineGoroutines, baselineFDs, 4, 2)
+	})
+}
+
 func runAnyConnectSoak(t *testing.T, legacyDTLS bool) {
 	t.Helper()
 	if os.Getenv("MIHOMO_ANYCONNECT_SOAK") != "1" {
@@ -909,16 +1003,21 @@ func runAnyConnectSoak(t *testing.T, legacyDTLS bool) {
 	if err := peer.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 		t.Fatal(err)
 	}
+	waitForAnyConnectResourceCeiling(t, "AnyConnect soak", baselineGoroutines, baselineFDs, 4, 2)
+}
+
+func waitForAnyConnectResourceCeiling(t *testing.T, name string, baselineGoroutines int, baselineFDs int, goroutineAllowance int, fdAllowance int) {
+	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		runtime.GC()
 		goroutines := runtime.NumGoroutine()
 		fds := countAnyConnectFileDescriptors()
-		if goroutines <= baselineGoroutines+4 && (baselineFDs < 0 || fds <= baselineFDs+2) {
+		if goroutines <= baselineGoroutines+goroutineAllowance && (baselineFDs < 0 || fds <= baselineFDs+fdAllowance) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("CSTP soak leaked resources: goroutines %d -> %d, file descriptors %d -> %d", baselineGoroutines, goroutines, baselineFDs, fds)
+			t.Fatalf("%s leaked resources: goroutines %d -> %d, file descriptors %d -> %d", name, baselineGoroutines, goroutines, baselineFDs, fds)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

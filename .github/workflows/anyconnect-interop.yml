@@ -115,3 +115,23 @@ jobs:
 
       - name: Run legacy DTLS release soak
         run: go test -tags=with_gvisor ./adapter/outbound -run '^TestAnyConnectLegacyDTLSSoak$' -count=1 -timeout=7m
+
+  release-stress:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CGO_ENABLED: 0
+      GOTOOLCHAIN: local
+      MIHOMO_ANYCONNECT_STRESS: 1
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
+          go-version: "1.25"
+
+      - name: Run AnyConnect release stress
+        run: go test -tags=with_gvisor ./adapter/outbound -run '^TestAnyConnectReleaseStress$' -count=1 -timeout=5m
