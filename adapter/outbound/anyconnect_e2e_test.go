@@ -239,6 +239,12 @@ func TestAnyConnectOutboundIPv6TCPAndUDPEcho(t *testing.T) {
 		option.MTU = 1280
 	})
 	defer func() { _ = outbound.Close() }()
+	packetConn, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+	if err != nil {
+		t.Fatal(err)
+	}
+	udpDestination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
+	exchangeAnyConnectUDP(t, ctx, packetConn, udpDestination, "anyconnect IPv6 UDP before TCP")
 
 	connection, err := outbound.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: peerAddress, DstPort: testAnyConnectTCPPort})
 	if err != nil {
@@ -255,14 +261,8 @@ func TestAnyConnectOutboundIPv6TCPAndUDPEcho(t *testing.T) {
 	if string(reply) != string(request) {
 		t.Fatalf("unexpected IPv6 TCP echo: %q", reply)
 	}
-	_ = connection.Close()
-
-	packetConn, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
-	if err != nil {
-		t.Fatal(err)
-	}
-	exchangeAnyConnectUDP(t, ctx, packetConn, &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}, "anyconnect IPv6 UDP echo")
 	_ = packetConn.Close()
+	_ = connection.Close()
 	writeAnyConnectEvidenceForAddress(t, "ipv6", scenario.Name+"-tcp-udp-echo", []testanyconnect.Capability{testanyconnect.CapabilityPacketIPv6}, "ipv6")
 }
 
@@ -1212,27 +1212,48 @@ func waitForAnyConnectResourceCeiling(t *testing.T, name string, baselineGorouti
 
 func exchangeAnyConnectUDP(t *testing.T, ctx context.Context, connection net.PacketConn, destination net.Addr, payload string) {
 	t.Helper()
-	for ctx.Err() == nil {
+	write := func() {
 		if _, err := connection.WriteTo([]byte(payload), destination); err != nil {
 			t.Fatal(err)
 		}
-		deadline := time.Now().Add(500 * time.Millisecond)
+	}
+	write()
+	deadline, hasDeadline := ctx.Deadline()
+	if hasDeadline {
+		if err := connection.SetReadDeadline(deadline); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readResult := make(chan error, 1)
+	go func() {
+		reply := make([]byte, 128)
 		for {
-			_ = connection.SetReadDeadline(deadline)
-			reply := make([]byte, 128)
 			count, _, err := connection.ReadFrom(reply)
-			if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
-				break
-			}
 			if err != nil {
-				t.Fatal(err)
+				readResult <- err
+				return
 			}
 			if string(reply[:count]) == payload {
+				readResult <- nil
 				return
 			}
 		}
+	}()
+	retry := time.NewTicker(500 * time.Millisecond)
+	defer retry.Stop()
+	for {
+		select {
+		case err := <-readResult:
+			if err != nil {
+				t.Fatal(err)
+			}
+			return
+		case <-retry.C:
+			write()
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
 	}
-	t.Fatal(ctx.Err())
 }
 
 func countAnyConnectFileDescriptors() int {
