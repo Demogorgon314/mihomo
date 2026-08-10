@@ -74,6 +74,7 @@ func TestParseAnyConnectRejectsInvalidOptions(t *testing.T) {
 			mapping["token-secret"] = "AA"
 		}},
 		{name: "invalid DTLS mode", change: func(mapping map[string]any) { mapping["dtls-mode"] = "invalid" }},
+		{name: "invalid DTLS key exchange", change: func(mapping map[string]any) { mapping["dtls-key-exchange"] = "invalid" }},
 		{name: "legacy DTLS while disabled", change: func(mapping map[string]any) {
 			mapping["dtls-mode"] = "off"
 			mapping["legacy-dtls"] = true

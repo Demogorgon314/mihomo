@@ -196,6 +196,9 @@ func TestClientDTLSModesAndFallback(t *testing.T) {
 		if !gateway.DTLSAppIDObserved() {
 			t.Fatal("modern DTLS ClientHello did not carry the advertised App ID")
 		}
+		if !gateway.ModernDTLSPSKOffered() {
+			t.Fatal("default DTLS key exchange did not advertise PSK negotiation")
+		}
 		exchangeFacadeICMP(t, ctx, client, "dtls")
 		if gateway.DropDTLSConnections() != 1 {
 			t.Fatal("fake gateway did not have one active DTLS connection")
@@ -304,6 +307,9 @@ func TestClientDTLSInjectedResumption(t *testing.T) {
 	waitForTransportEvent(t, ctx, client, "dtls")
 	if !gateway.DTLSInjectedResumptionObserved() {
 		t.Fatal("fake gateway did not observe the injected DTLS session resumption")
+	}
+	if gateway.ModernDTLSPSKOffered() {
+		t.Fatal("resumption-only mode advertised PSK negotiation")
 	}
 	exchangeFacadeICMP(t, ctx, client, "injected-resumption")
 }
@@ -448,12 +454,17 @@ func newDTLSTestClientForScenarioWithLegacy(t *testing.T, scenario testanyconnec
 		t.Fatal(err)
 	}
 	dialer := &dtlsTestDialer{failUDP: failUDP, fault: fault}
+	dtlsKeyExchange := ""
+	if scenario.InjectedDTLS {
+		dtlsKeyExchange = DTLSKeyExchangeResumption
+	}
 	client, err := NewClient(ctx, Config{
 		Server:               "https://" + gateway.ServerName() + ":" + port,
 		Cookie:               scenario.Cookie,
 		ServerName:           gateway.ServerName(),
 		CertificateAuthority: testanyconnect.RootCAPEM(),
 		DTLSMode:             mode,
+		DTLSKeyExchange:      dtlsKeyExchange,
 		LegacyDTLS:           legacyDTLS,
 	}, dialer, nil)
 	if err != nil {

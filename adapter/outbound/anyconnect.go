@@ -73,6 +73,7 @@ type AnyConnectOption struct {
 	RemoteDnsResolve bool           `proxy:"remote-dns-resolve,omitempty"`
 	Dns              []string       `proxy:"dns,omitempty"`
 	DTLSMode         string         `proxy:"dtls-mode,omitempty"`
+	DTLSKeyExchange  string         `proxy:"dtls-key-exchange,omitempty"`
 	LegacyDTLS       bool           `proxy:"legacy-dtls,omitempty"`
 
 	AuthProvider       ac.AuthProvider                     `proxy:"-"`
@@ -145,6 +146,7 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 		DPDInterval:          time.Duration(option.DPDInterval) * time.Second,
 		ReconnectTimeout:     time.Duration(option.ReconnectTimeout) * time.Second,
 		DTLSMode:             option.DTLSMode,
+		DTLSKeyExchange:      option.DTLSKeyExchange,
 		LegacyDTLS:           option.LegacyDTLS,
 	}
 	if option.TokenMode != "" || option.TokenSecret != "" || option.TokenCounter != 0 || option.TokenCounterUpdate != nil {

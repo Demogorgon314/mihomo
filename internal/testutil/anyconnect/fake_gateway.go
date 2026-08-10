@@ -67,6 +67,7 @@ type Gateway struct {
 	dtlsBlackhole           atomic.Bool
 	dtlsAppIDObserved       atomic.Bool
 	dtlsResumeObserved      atomic.Bool
+	modernDTLSPSKOffered    atomic.Bool
 	legacyHandshakeObserved atomic.Bool
 	legacyDTLSOffered       atomic.Bool
 	legacyLock              sync.Mutex
@@ -347,6 +348,9 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 		return writeHTTPRejection(connection, g.scenario.CSTP.RejectStatus)
 	}
 	if g.scenario.ModernDTLS || g.scenario.LegacyDTLS {
+		if strings.Contains(request.Header.Get("X-DTLS-CipherSuite"), "PSK-NEGOTIATE") {
+			g.modernDTLSPSKOffered.Store(true)
+		}
 		if strings.Contains(request.Header.Get("X-DTLS-CipherSuite"), "AES128-SHA") {
 			g.legacyDTLSOffered.Store(true)
 		}

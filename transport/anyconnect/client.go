@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	modernDTLSCipherSuites   = "PSK-NEGOTIATE:OC2-DTLS1_2-CHACHA20-POLY1305:OC-DTLS1_2-AES256-GCM:OC-DTLS1_2-AES128-GCM"
-	legacyDTLSCipherSuites   = modernDTLSCipherSuites + ":AES256-SHA:AES128-SHA"
-	modernDTLS12CipherSuites = "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-GCM-SHA256"
+	modernDTLSCipherSuites      = "PSK-NEGOTIATE:OC2-DTLS1_2-CHACHA20-POLY1305:OC-DTLS1_2-AES256-GCM:OC-DTLS1_2-AES128-GCM"
+	resumptionDTLSCipherSuites  = "OC-DTLS1_2-AES256-GCM:OC-DTLS1_2-AES128-GCM"
+	legacyDTLSCipherSuiteSuffix = ":AES256-SHA:AES128-SHA"
+	modernDTLS12CipherSuites    = "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-GCM-SHA256"
 )
 
 // NetworkConfig is a caller-owned snapshot of the negotiated tunnel settings.
@@ -171,8 +172,11 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		compressionMode = openconnect.CompressionModeAll
 	}
 	dtlsCipherSuites := modernDTLSCipherSuites
+	if config.DTLSKeyExchange == DTLSKeyExchangeResumption {
+		dtlsCipherSuites = resumptionDTLSCipherSuites
+	}
 	if config.LegacyDTLS {
-		dtlsCipherSuites = legacyDTLSCipherSuites
+		dtlsCipherSuites += legacyDTLSCipherSuiteSuffix
 	}
 	core, err := openconnect.NewClient(openconnect.ClientOptions{
 		Context:             ctx,
