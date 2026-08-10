@@ -237,6 +237,135 @@ func TestAnyConnectOutboundIPv6TCPAndUDPEcho(t *testing.T) {
 	writeAnyConnectEvidenceForAddress(t, "ipv6", scenario.Name+"-tcp-udp-echo", []testanyconnect.Capability{testanyconnect.CapabilityPacketIPv6}, "ipv6")
 }
 
+func TestAnyConnectModernDTLSOutbound(t *testing.T) {
+	t.Run("auto fallback", func(t *testing.T) {
+		ctx, outbound, session, gateway, recorder, peerAddress := startModernDTLSOutbound(t, "")
+		waitAnyConnectTransport(t, ctx, session, "dtls")
+		connection, err := outbound.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: peerAddress, DstPort: testAnyConnectTCPPort})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := []byte("modern DTLS TCP echo")
+		if _, err := connection.Write(request); err != nil {
+			t.Fatal(err)
+		}
+		reply := make([]byte, len(request))
+		if _, err := io.ReadFull(connection, reply); err != nil {
+			t.Fatal(err)
+		}
+		_ = connection.Close()
+		packetConn, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer packetConn.Close()
+		destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
+		exchangeAnyConnectUDP(t, ctx, packetConn, destination, "modern DTLS UDP echo")
+		if countRecords(recorder.Records(), "dtls-data") == 0 {
+			t.Fatal("outbound traffic did not traverse modern DTLS")
+		}
+		beforeFallback := countRecords(recorder.Records(), "cstp-data")
+		gateway.SetDTLSBlackhole(true)
+		waitAnyConnectTransport(t, ctx, session, "cstp")
+		exchangeAnyConnectUDP(t, ctx, packetConn, destination, "CSTP fallback UDP echo")
+		if countRecords(recorder.Records(), "cstp-data") <= beforeFallback {
+			t.Fatal("auto mode did not carry the existing UDP flow over CSTP fallback")
+		}
+		writeAnyConnectEvidenceForTransport(t, "modern-dtls", "modern-dtls-auto", []testanyconnect.Capability{testanyconnect.CapabilityModernDTLS}, "dtls")
+		writeAnyConnectEvidenceForTransport(t, "modern-dtls-fallback", "modern-dtls-auto-fallback", []testanyconnect.Capability{testanyconnect.CapabilityFallback}, "cstp")
+	})
+
+	t.Run("require fail closed", func(t *testing.T) {
+		ctx, outbound, session, gateway, recorder, peerAddress := startModernDTLSOutbound(t, ac.DTLSModeRequire)
+		waitAnyConnectTransport(t, ctx, session, "dtls")
+		packetConn, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer packetConn.Close()
+		destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
+		exchangeAnyConnectUDP(t, ctx, packetConn, destination, "required DTLS UDP echo")
+		request, err := testanyconnect.BuildIPv4ICMPEchoRequest(netip.MustParseAddr("192.0.2.2"), peerAddress, 62, 1, []byte("require-fail-closed"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writerStarted := make(chan struct{})
+		writerDone := make(chan struct{})
+		go func() {
+			defer close(writerDone)
+			started := false
+			for {
+				if err := session.client.WritePacket(request); err != nil {
+					return
+				}
+				if !started {
+					close(writerStarted)
+					started = true
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}()
+		<-writerStarted
+		beforeFallback := countRecords(recorder.Records(), "cstp-data")
+		if gateway.DropDTLSConnections() != 1 {
+			t.Fatal("fake gateway did not have one active DTLS connection")
+		}
+		select {
+		case <-session.done:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		<-writerDone
+		if afterFallback := countRecords(recorder.Records(), "cstp-data"); afterFallback != beforeFallback {
+			t.Fatalf("require mode transmitted data over CSTP: before=%d after=%d", beforeFallback, afterFallback)
+		}
+		if _, err := outbound.run(ctx); !errors.Is(err, ac.ErrDTLSRequired) {
+			t.Fatalf("require failure was not latched by the outbound: %v", err)
+		}
+	})
+}
+
+func startModernDTLSOutbound(t *testing.T, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	scenario := testanyconnect.BasicCSTPScenario()
+	scenario.ModernDTLS = true
+	peerAddress := netip.MustParseAddr("192.0.2.1")
+	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = peer.Close() })
+	recorder := testanyconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = gateway.Close() })
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+		option.DTLSMode = mode
+		option.DPDInterval = 2
+	})
+	t.Cleanup(func() { _ = outbound.Close() })
+	session, err := outbound.run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ctx, outbound, session, gateway, recorder, peerAddress
+}
+
+func waitAnyConnectTransport(t *testing.T, ctx context.Context, session *anyConnectSession, transport string) {
+	t.Helper()
+	for session.client.ActiveTransport() != transport {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for %s transport: %v", transport, ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
 func TestAnyConnectRemoteDNSUsesTunnelAndOverridePrecedence(t *testing.T) {
 	for _, testCase := range []struct {
 		name        string
@@ -1041,10 +1170,18 @@ func writeAnyConnectOutboundEvidence(t *testing.T, scenario string) {
 }
 
 func writeAnyConnectEvidence(t *testing.T, suffix string, scenario string, capabilities []testanyconnect.Capability) {
-	writeAnyConnectEvidenceForAddress(t, suffix, scenario, capabilities, "ipv4")
+	writeAnyConnectEvidenceForTransport(t, suffix, scenario, capabilities, "cstp")
 }
 
 func writeAnyConnectEvidenceForAddress(t *testing.T, suffix string, scenario string, capabilities []testanyconnect.Capability, address string) {
+	writeAnyConnectEvidenceForTransportAndAddress(t, suffix, scenario, capabilities, "cstp", address)
+}
+
+func writeAnyConnectEvidenceForTransport(t *testing.T, suffix string, scenario string, capabilities []testanyconnect.Capability, transport string) {
+	writeAnyConnectEvidenceForTransportAndAddress(t, suffix, scenario, capabilities, transport, "ipv4")
+}
+
+func writeAnyConnectEvidenceForTransportAndAddress(t *testing.T, suffix string, scenario string, capabilities []testanyconnect.Capability, transport string, address string) {
 	t.Helper()
 	path := os.Getenv("MIHOMO_ANYCONNECT_MATRIX")
 	if path == "" {
@@ -1059,7 +1196,7 @@ func writeAnyConnectEvidenceForAddress(t *testing.T, suffix string, scenario str
 			Scenario:   scenario,
 			Driver:     testanyconnect.DriverOutbound,
 			Gateway:    "fake",
-			Transport:  "cstp",
+			Transport:  transport,
 			Address:    address,
 			Passed:     true,
 		}); err != nil {

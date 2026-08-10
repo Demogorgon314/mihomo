@@ -14,6 +14,9 @@ const (
 	CompressionOff       = "off"
 	CompressionStateless = "stateless"
 	CompressionAll       = "all"
+	DTLSModeOff          = "off"
+	DTLSModeAuto         = "auto"
+	DTLSModeRequire      = "require"
 	MaximumQueueLength   = 4096
 )
 
@@ -54,6 +57,7 @@ type Config struct {
 	BaseMTU              uint32
 	IPv6                 bool
 	Compression          string
+	DTLSMode             string
 	DPDInterval          time.Duration
 	ReconnectTimeout     time.Duration
 	QueueLength          uint32
@@ -130,6 +134,11 @@ func (c Config) validate(hasAuthProvider bool) error {
 	case "", CompressionOff, CompressionStateless, CompressionAll:
 	default:
 		return invalidConfig("compression must be off, stateless, or all")
+	}
+	switch c.DTLSMode {
+	case "", DTLSModeOff, DTLSModeAuto, DTLSModeRequire:
+	default:
+		return invalidConfig("DTLS mode must be off, auto, or require")
 	}
 	for _, entry := range c.FormEntries {
 		if entry.SubmissionKey == "" && (entry.FormID == "" || entry.Name == "") {
