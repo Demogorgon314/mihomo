@@ -4,11 +4,17 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"time"
 )
 
 const (
 	TokenModeTOTP = "totp"
 	TokenModeHOTP = "hotp"
+
+	CompressionOff       = "off"
+	CompressionStateless = "stateless"
+	CompressionAll       = "all"
+	MaximumQueueLength   = 4096
 )
 
 // TokenConfig configures a software OATH token. UpdateCounter persists the
@@ -45,6 +51,13 @@ type Config struct {
 	PeerFingerprint      string
 	SkipCertVerify       bool
 	MTU                  uint32
+	BaseMTU              uint32
+	IPv6                 bool
+	Compression          string
+	DPDInterval          time.Duration
+	ReconnectTimeout     time.Duration
+	QueueLength          uint32
+	OnNetworkConfig      func(event NetworkConfigEvent) error
 }
 
 // ValidateConfig validates configuration without opening a network connection.
@@ -94,6 +107,29 @@ func (c Config) validate(hasAuthProvider bool) error {
 		if c.Token.Mode == TokenModeHOTP && c.Token.UpdateCounter == nil {
 			return invalidConfig("HOTP token requires a counter update callback")
 		}
+	}
+	if c.MTU != 0 && (c.MTU < 576 || c.MTU > 65535) {
+		return invalidConfig("MTU must be between 576 and 65535")
+	}
+	if c.IPv6 && c.MTU != 0 && c.MTU < 1280 {
+		return invalidConfig("IPv6 MTU must be at least 1280")
+	}
+	if c.BaseMTU != 0 && (c.BaseMTU < 576 || c.BaseMTU > 65535) {
+		return invalidConfig("base MTU must be between 576 and 65535")
+	}
+	if c.DPDInterval < 0 {
+		return invalidConfig("DPD interval must be non-negative")
+	}
+	if c.ReconnectTimeout < 0 {
+		return invalidConfig("reconnect timeout must be non-negative")
+	}
+	if c.QueueLength > MaximumQueueLength {
+		return invalidConfig("packet queue length must not exceed 4096")
+	}
+	switch c.Compression {
+	case "", CompressionOff, CompressionStateless, CompressionAll:
+	default:
+		return invalidConfig("compression must be off, stateless, or all")
 	}
 	for _, entry := range c.FormEntries {
 		if entry.SubmissionKey == "" && (entry.FormID == "" || entry.Name == "") {

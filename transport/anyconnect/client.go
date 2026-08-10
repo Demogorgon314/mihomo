@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -15,27 +16,66 @@ import (
 
 // NetworkConfig is a caller-owned snapshot of the negotiated tunnel settings.
 type NetworkConfig struct {
-	Addresses      []netip.Prefix
-	Routes         []netip.Prefix
-	ExcludedRoutes []netip.Prefix
-	DNS            []netip.Addr
-	MTU            uint32
+	RemoteAddress            netip.Addr
+	Addresses                []netip.Prefix
+	Routes                   []netip.Prefix
+	ExcludedRoutes           []netip.Prefix
+	DNS                      []netip.Addr
+	NBNS                     []netip.Addr
+	SearchDomains            []string
+	SplitDNS                 []string
+	SplitDNSRules            []NetworkSplitDNSRule
+	ProxyAutoConfigURL       string
+	Banner                   string
+	TunnelAllDNS             bool
+	ClientBypassProtocol     bool
+	IdleTimeout              time.Duration
+	AuthenticationExpiration time.Time
+	ActiveTransport          string
+	MTU                      uint32
+}
+
+type NetworkSplitDNSRule struct {
+	Domains []string
+	Servers []netip.Addr
+}
+
+type NetworkConfigEventReason string
+
+const (
+	NetworkConfigInitial         NetworkConfigEventReason = "initial"
+	NetworkConfigReestablishment NetworkConfigEventReason = "reestablishment"
+	NetworkConfigRekey           NetworkConfigEventReason = "rekey"
+	NetworkConfigPathMTU         NetworkConfigEventReason = "path-mtu"
+)
+
+type NetworkConfigEvent struct {
+	Reason NetworkConfigEventReason
+	Config NetworkConfig
 }
 
 // Client isolates the outbound package from sing-openconnect types.
 type Client struct {
-	core         *openconnect.Client
-	authProvider AuthProvider
-	authCtx      context.Context
-	authCancel   context.CancelFunc
-	authDone     chan struct{}
-	events       chan Event
-	secretAccess sync.Mutex
-	secrets      []string
-	errorAccess  sync.Mutex
-	authError    error
-	closeOnce    sync.Once
-	closeErr     error
+	core           *openconnect.Client
+	authProvider   AuthProvider
+	authCtx        context.Context
+	authCancel     context.CancelFunc
+	authDone       chan struct{}
+	events         chan Event
+	eventAccess    sync.Mutex
+	eventsClosed   bool
+	secretAccess   sync.Mutex
+	secrets        []string
+	errorAccess    sync.Mutex
+	authError      error
+	networkAccess  sync.Mutex
+	networkConfig  NetworkConfig
+	networkApplied bool
+	networkHandler func(NetworkConfigEvent) error
+	networkUpdated chan struct{}
+	networkError   error
+	closeOnce      sync.Once
+	closeErr       error
 }
 
 // NewClient creates a CSTP-only AnyConnect protocol client.
@@ -101,12 +141,19 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	}
 	authCtx, authCancel := context.WithCancel(ctx)
 	client := &Client{
-		authProvider: authProvider,
-		authCtx:      authCtx,
-		authCancel:   authCancel,
-		authDone:     make(chan struct{}),
-		events:       make(chan Event, 16),
-		secrets:      configSecrets(config),
+		authProvider:   authProvider,
+		authCtx:        authCtx,
+		authCancel:     authCancel,
+		authDone:       make(chan struct{}),
+		events:         make(chan Event, 16),
+		secrets:        configSecrets(config),
+		networkHandler: config.OnNetworkConfig,
+		networkUpdated: make(chan struct{}),
+	}
+	compressionDisabled := config.Compression == "" || config.Compression == CompressionOff
+	compressionMode := openconnect.CompressionModeStateless
+	if config.Compression == CompressionAll {
+		compressionMode = openconnect.CompressionModeAll
 	}
 	core, err := openconnect.NewClient(openconnect.ClientOptions{
 		Context:             ctx,
@@ -117,9 +164,14 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		AuthGroup:           config.AuthGroup,
 		Token:               tokenOptions,
 		NoUDP:               true,
-		CompressionDisabled: true,
-		IPv6Disabled:        true,
+		CompressionDisabled: compressionDisabled,
+		CompressionMode:     compressionMode,
+		IPv6Disabled:        !config.IPv6,
 		MTU:                 config.MTU,
+		BaseMTU:             config.BaseMTU,
+		QueueLength:         config.QueueLength,
+		DPDInterval:         config.DPDInterval,
+		ReconnectTimeout:    config.ReconnectTimeout,
 		TLSConfig:           tlsOptions,
 		FormEntries:         formEntries,
 		Dialer:              underlay,
@@ -130,6 +182,7 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 			client.publishEvent(Event{Type: EventHostScanRequested})
 			return ErrHostScanPolicy
 		},
+		OnTunnelConfiguration: client.handleNetworkConfigEvent,
 	})
 	if err != nil {
 		authCancel()
@@ -181,11 +234,23 @@ func (c *Client) WaitReady(ctx context.Context) (NetworkConfig, error) {
 		}
 		return NetworkConfig{}, classifyClientError(err, c.secretsSnapshot())
 	}
-	return networkConfigFromCore(configuration), nil
+	result := networkConfigFromCore(configuration)
+	result.ActiveTransport = c.core.ActiveTransport()
+	if err := c.waitNetworkConfig(ctx, result); err != nil {
+		return NetworkConfig{}, err
+	}
+	return cloneNetworkConfig(result), nil
 }
 
 func (c *Client) ReadPacket(ctx context.Context) ([]byte, error) {
-	return c.core.ReadDataPacket(ctx)
+	packet, err := c.core.ReadDataPacket(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := c.WaitReady(ctx); err != nil {
+		return nil, err
+	}
+	return packet, nil
 }
 
 func (c *Client) WritePacket(packet []byte) error {
@@ -196,12 +261,91 @@ func (c *Client) ActiveTransport() string {
 	return c.core.ActiveTransport()
 }
 
+func (c *Client) handleNetworkConfigEvent(event openconnect.TunnelConfigurationEvent) error {
+	configuration := networkConfigFromCore(event.Configuration)
+	configuration.ActiveTransport = c.core.ActiveTransport()
+	mapped := NetworkConfigEvent{Reason: NetworkConfigEventReason(event.Reason), Config: configuration}
+	eventConfiguration := sanitizeNetworkConfigForEvent(configuration, c.secretsSnapshot())
+	c.publishEvent(Event{Type: EventNetworkConfig, NetworkConfig: &eventConfiguration, NetworkReason: mapped.Reason})
+	return c.applyNetworkConfig(mapped)
+}
+
+func (c *Client) applyNetworkConfig(event NetworkConfigEvent) error {
+	c.networkAccess.Lock()
+	defer c.networkAccess.Unlock()
+	if c.networkHandler != nil {
+		if err := c.networkHandler(NetworkConfigEvent{Reason: event.Reason, Config: cloneNetworkConfig(event.Config)}); err != nil {
+			c.networkError = err
+			c.signalNetworkUpdatedLocked()
+			return err
+		}
+	}
+	c.networkConfig = cloneNetworkConfig(event.Config)
+	c.networkApplied = true
+	c.signalNetworkUpdatedLocked()
+	return nil
+}
+
+func (c *Client) waitNetworkConfig(ctx context.Context, configuration NetworkConfig) error {
+	for {
+		c.networkAccess.Lock()
+		if c.networkError != nil {
+			err := c.networkError
+			c.networkAccess.Unlock()
+			return err
+		}
+		if c.networkApplied && sameNetworkConfig(c.networkConfig, configuration) {
+			c.networkAccess.Unlock()
+			return nil
+		}
+		updated := c.networkUpdated
+		c.networkAccess.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-updated:
+		}
+	}
+}
+
+func (c *Client) signalNetworkUpdatedLocked() {
+	close(c.networkUpdated)
+	c.networkUpdated = make(chan struct{})
+}
+
+func sameNetworkConfig(left NetworkConfig, right NetworkConfig) bool {
+	if left.RemoteAddress != right.RemoteAddress || left.MTU != right.MTU ||
+		left.ProxyAutoConfigURL != right.ProxyAutoConfigURL || left.Banner != right.Banner ||
+		left.TunnelAllDNS != right.TunnelAllDNS || left.ClientBypassProtocol != right.ClientBypassProtocol ||
+		left.IdleTimeout != right.IdleTimeout || !left.AuthenticationExpiration.Equal(right.AuthenticationExpiration) ||
+		!slices.Equal(left.Addresses, right.Addresses) || !slices.Equal(left.Routes, right.Routes) ||
+		!slices.Equal(left.ExcludedRoutes, right.ExcludedRoutes) || !slices.Equal(left.DNS, right.DNS) ||
+		!slices.Equal(left.NBNS, right.NBNS) || !slices.Equal(left.SearchDomains, right.SearchDomains) ||
+		!slices.Equal(left.SplitDNS, right.SplitDNS) || len(left.SplitDNSRules) != len(right.SplitDNSRules) {
+		return false
+	}
+	for index := range left.SplitDNSRules {
+		if !slices.Equal(left.SplitDNSRules[index].Domains, right.SplitDNSRules[index].Domains) ||
+			!slices.Equal(left.SplitDNSRules[index].Servers, right.SplitDNSRules[index].Servers) {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
 		c.authCancel()
 		c.closeErr = c.core.Close()
 		<-c.authDone
+		c.networkAccess.Lock()
+		c.networkError = openconnect.ErrClientClosed
+		c.signalNetworkUpdatedLocked()
+		c.networkAccess.Unlock()
+		c.eventAccess.Lock()
+		c.eventsClosed = true
 		close(c.events)
+		c.eventAccess.Unlock()
 	})
 	return c.closeErr
 }
@@ -303,6 +447,11 @@ func (c *Client) authenticationError() error {
 }
 
 func (c *Client) publishEvent(event Event) {
+	c.eventAccess.Lock()
+	defer c.eventAccess.Unlock()
+	if c.eventsClosed {
+		return
+	}
 	select {
 	case c.events <- event:
 	default:
@@ -356,9 +505,19 @@ func (c *Client) registerAuthResponseSecrets(response AuthResponse) {
 
 func networkConfigFromCore(configuration openconnect.TunnelConfiguration) NetworkConfig {
 	result := NetworkConfig{
-		Addresses: append([]netip.Prefix(nil), configuration.Addresses...),
-		DNS:       append([]netip.Addr(nil), configuration.DNS...),
-		MTU:       configuration.MTU,
+		RemoteAddress:            configuration.RemoteAddress,
+		Addresses:                append([]netip.Prefix(nil), configuration.Addresses...),
+		DNS:                      append([]netip.Addr(nil), configuration.DNS...),
+		NBNS:                     append([]netip.Addr(nil), configuration.NBNS...),
+		SearchDomains:            append([]string(nil), configuration.SearchDomains...),
+		SplitDNS:                 append([]string(nil), configuration.SplitDNS...),
+		ProxyAutoConfigURL:       configuration.ProxyAutoConfigURL,
+		Banner:                   configuration.Banner,
+		TunnelAllDNS:             configuration.TunnelAllDNS,
+		ClientBypassProtocol:     configuration.ClientBypassProtocol,
+		IdleTimeout:              configuration.IdleTimeout,
+		AuthenticationExpiration: configuration.AuthenticationExpiration,
+		MTU:                      configuration.MTU,
 	}
 	result.Routes = make([]netip.Prefix, 0, len(configuration.Routes))
 	for _, route := range configuration.Routes {
@@ -368,5 +527,40 @@ func networkConfigFromCore(configuration openconnect.TunnelConfiguration) Networ
 	for _, route := range configuration.ExcludedRoutes {
 		result.ExcludedRoutes = append(result.ExcludedRoutes, route.Prefix)
 	}
+	result.SplitDNSRules = make([]NetworkSplitDNSRule, len(configuration.SplitDNSRules))
+	for index, rule := range configuration.SplitDNSRules {
+		result.SplitDNSRules[index] = NetworkSplitDNSRule{
+			Domains: append([]string(nil), rule.Domains...),
+			Servers: append([]netip.Addr(nil), rule.Servers...),
+		}
+	}
 	return result
+}
+
+func cloneNetworkConfig(configuration NetworkConfig) NetworkConfig {
+	configuration.Addresses = append([]netip.Prefix(nil), configuration.Addresses...)
+	configuration.Routes = append([]netip.Prefix(nil), configuration.Routes...)
+	configuration.ExcludedRoutes = append([]netip.Prefix(nil), configuration.ExcludedRoutes...)
+	configuration.DNS = append([]netip.Addr(nil), configuration.DNS...)
+	configuration.NBNS = append([]netip.Addr(nil), configuration.NBNS...)
+	configuration.SearchDomains = append([]string(nil), configuration.SearchDomains...)
+	configuration.SplitDNS = append([]string(nil), configuration.SplitDNS...)
+	configuration.SplitDNSRules = append([]NetworkSplitDNSRule(nil), configuration.SplitDNSRules...)
+	for index := range configuration.SplitDNSRules {
+		configuration.SplitDNSRules[index].Domains = append([]string(nil), configuration.SplitDNSRules[index].Domains...)
+		configuration.SplitDNSRules[index].Servers = append([]netip.Addr(nil), configuration.SplitDNSRules[index].Servers...)
+	}
+	return configuration
+}
+
+func sanitizeNetworkConfigForEvent(configuration NetworkConfig, secrets []string) NetworkConfig {
+	configuration = cloneNetworkConfig(configuration)
+	configuration.ProxyAutoConfigURL = redactErrorMessage(configuration.ProxyAutoConfigURL, secrets)
+	configuration.Banner = redactErrorMessage(configuration.Banner, secrets)
+	redactStrings(configuration.SearchDomains, secrets)
+	redactStrings(configuration.SplitDNS, secrets)
+	for index := range configuration.SplitDNSRules {
+		redactStrings(configuration.SplitDNSRules[index].Domains, secrets)
+	}
+	return configuration
 }

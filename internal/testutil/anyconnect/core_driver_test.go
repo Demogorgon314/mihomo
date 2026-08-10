@@ -335,6 +335,91 @@ func TestSingOpenConnectModernDTLSDriver(t *testing.T) {
 	}
 }
 
+func TestSingOpenConnectStatelessCompressionDriver(t *testing.T) {
+	for _, algorithm := range []string{"lzs", "oc-lz4"} {
+		t.Run(algorithm, func(t *testing.T) {
+			scenario := BasicCSTPScenario()
+			scenario.Compression = algorithm
+			peerAddress := netip.MustParseAddr("192.0.2.1")
+			peer, err := NewIPv4ICMPEchoPeer(peerAddress)
+			if err != nil {
+				t.Fatal(err)
+			}
+			recorder := NewRecorder(scenario.Cookie)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			gateway, err := StartGateway(ctx, scenario, peer, recorder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = gateway.Close() }()
+			_, port, err := net.SplitHostPort(gateway.Address())
+			if err != nil {
+				t.Fatal(err)
+			}
+			client, err := openconnect.NewClient(openconnect.ClientOptions{
+				Context:             ctx,
+				Server:              "https://" + gateway.ServerName() + ":" + port,
+				Cookie:              scenario.Cookie,
+				NoUDP:               true,
+				IPv6Disabled:        true,
+				CompressionMode:     openconnect.CompressionModeStateless,
+				CompressionDisabled: false,
+				TLSConfig: openconnect.ClientTLSOptions{Config: &tls.Config{
+					MinVersion: tls.VersionTLS12,
+					ServerName: gateway.ServerName(),
+					RootCAs:    gateway.RootCAs(),
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = client.Close() }()
+			if err := client.Start(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.WaitReady(ctx); err != nil {
+				t.Fatal(err)
+			}
+			request, err := BuildIPv4ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), peerAddress, 31, 1, bytes.Repeat([]byte("compressible-"), 64))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := client.WriteDataPacket(request); err != nil {
+				t.Fatal(err)
+			}
+			for {
+				compressed := false
+				for _, record := range recorder.Records() {
+					if record.Kind == "cstp-compressed" {
+						compressed = true
+						break
+					}
+				}
+				if compressed {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			if err := phase0CapabilityMatrix.Record(Evidence{
+				Capability: CapabilityCompression,
+				Scenario:   scenario.Name + "-" + algorithm,
+				Driver:     DriverCore,
+				Gateway:    "fake",
+				Transport:  openconnect.TransportCSTP,
+				Address:    "ipv4",
+				Passed:     true,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func newCoreTestClient(
 	ctx context.Context,
 	gateway *Gateway,
