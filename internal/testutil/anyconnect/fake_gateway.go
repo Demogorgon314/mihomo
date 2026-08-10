@@ -81,6 +81,14 @@ func StartGateway(parent context.Context, scenario Scenario, peer PacketPeer, re
 	if err != nil {
 		return nil, err
 	}
+	if len(scenario.Authentication.ClientCertificateAuthority) > 0 {
+		clientRoots := x509.NewCertPool()
+		if !clientRoots.AppendCertsFromPEM(scenario.Authentication.ClientCertificateAuthority) {
+			return nil, errors.New("load fake gateway client certificate authority")
+		}
+		serverTLS.ClientAuth = tls.RequireAndVerifyClientCert
+		serverTLS.ClientCAs = clientRoots
+	}
 	listener, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
 	if err != nil {
 		return nil, fmt.Errorf("listen for fake gateway: %w", err)
@@ -416,6 +424,8 @@ func writeHTTPRejection(writer net.Conn, status int) error {
 func cloneScenario(scenario Scenario) Scenario {
 	scenario.Configuration.Addresses = append([]netip.Prefix(nil), scenario.Configuration.Addresses...)
 	scenario.Configuration.DNS = append([]netip.Addr(nil), scenario.Configuration.DNS...)
+	scenario.Authentication.ChallengeResponses = append([]string(nil), scenario.Authentication.ChallengeResponses...)
+	scenario.Authentication.ClientCertificateAuthority = append([]byte(nil), scenario.Authentication.ClientCertificateAuthority...)
 	return scenario
 }
 

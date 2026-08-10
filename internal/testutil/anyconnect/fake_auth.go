@@ -14,8 +14,9 @@ import (
 const maximumFakeAuthBodySize = 64 * 1024
 
 type fakeAuthRequest struct {
-	Type string `xml:"type,attr"`
-	Auth struct {
+	Type        string `xml:"type,attr"`
+	GroupSelect string `xml:"group-select"`
+	Auth        struct {
 		Username string `xml:"username"`
 		Password string `xml:"password"`
 	} `xml:"auth"`
@@ -44,8 +45,18 @@ func (g *Gateway) handleAuthRequest(connection net.Conn, request *http.Request) 
 		g.authLock.Lock()
 		g.authChallengePending = false
 		g.authLock.Unlock()
+		if authentication := g.scenario.Authentication; authentication.HostScan {
+			g.record("host-scan", "issued host scan request")
+			return writeFakeAuthXML(connection, http.StatusOK, fakeHostScanAuthForm, "")
+		} else if authentication.Browser {
+			g.record("browser-auth", "issued browser authentication request")
+			return writeFakeAuthXML(connection, http.StatusOK, fakeBrowserAuthForm, "")
+		} else if authentication.AuthGroup != "" && document.GroupSelect != "" && document.GroupSelect != authentication.AuthGroup {
+			g.record("auth-reject", "rejected authentication group")
+			return writeHTTPRejection(connection, http.StatusUnauthorized)
+		}
 		g.record("auth-form", "issued primary credential form")
-		return writeFakeAuthXML(connection, http.StatusOK, fakePrimaryAuthForm, "")
+		return writeFakeAuthXML(connection, http.StatusOK, fakePrimaryAuthenticationForm(g.scenario.Authentication.AuthGroup, document.GroupSelect), "")
 	case "auth-reply":
 		return g.handleAuthReply(connection, document)
 	default:
@@ -58,14 +69,15 @@ func (g *Gateway) handleAuthReply(connection net.Conn, document fakeAuthRequest)
 	g.authLock.Lock()
 	defer g.authLock.Unlock()
 	if g.authChallengePending {
-		if document.Auth.Password != authentication.ChallengeResponse {
+		if !authentication.acceptsChallengeResponse(document.Auth.Password) {
 			g.record("auth-reject", "rejected challenge response")
 			return writeHTTPRejection(connection, http.StatusUnauthorized)
 		}
 		g.authChallengePending = false
 		return g.completeAuthentication(connection)
 	}
-	if document.Auth.Username != authentication.Username || document.Auth.Password != authentication.Password {
+	if document.Auth.Username != authentication.Username || document.Auth.Password != authentication.Password ||
+		authentication.AuthGroup != "" && document.GroupSelect != authentication.AuthGroup {
 		g.record("auth-reject", "rejected primary credentials")
 		return writeHTTPRejection(connection, http.StatusUnauthorized)
 	}
@@ -76,6 +88,18 @@ func (g *Gateway) handleAuthReply(connection net.Conn, document fakeAuthRequest)
 		return writeFakeAuthXML(connection, http.StatusOK, form, "")
 	}
 	return g.completeAuthentication(connection)
+}
+
+func (a AuthenticationScenario) acceptsChallengeResponse(value string) bool {
+	if value == a.ChallengeResponse && value != "" {
+		return true
+	}
+	for _, candidate := range a.ChallengeResponses {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Gateway) completeAuthentication(connection net.Conn) error {
@@ -142,8 +166,26 @@ func xmlEscape(value string) string {
 const fakePrimaryAuthForm = `<?xml version="1.0" encoding="UTF-8"?>
 <config-auth><auth id="main"><banner>Phase 0 fake gateway</banner><form method="POST" action="/auth"><input type="text" name="username" label="Username"/><input type="password" name="password" label="Password"/></form></auth></config-auth>`
 
+func fakePrimaryAuthenticationForm(authGroup string, selectedGroup string) string {
+	if authGroup == "" {
+		return fakePrimaryAuthForm
+	}
+	selected := ""
+	if selectedGroup == authGroup {
+		selected = ` selected="true"`
+	}
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<config-auth><auth id="main"><banner>Phase 2 fake gateway</banner><form method="POST" action="/auth"><select name="group_list" label="Group"><option value="other">Other</option><option value="` + xmlEscape(authGroup) + `"` + selected + `>` + xmlEscape(authGroup) + `</option></select><input type="text" name="username" label="Username"/><input type="password" name="password" label="Password"/></form></auth></config-auth>`
+}
+
 const fakeChallengeAuthForm = `<?xml version="1.0" encoding="UTF-8"?>
 <config-auth><auth id="challenge"><message>{{CHALLENGE}}</message><form method="POST" action="/auth"><input type="password" name="answer" label="Response"/></form></auth></config-auth>`
 
 const fakeAuthComplete = `<?xml version="1.0" encoding="UTF-8"?>
 <config-auth><session-token>{{TOKEN}}</session-token><auth id="success"><authentication-complete/></auth></config-auth>`
+
+const fakeBrowserAuthForm = `<?xml version="1.0" encoding="UTF-8"?>
+<config-auth><auth id="sso"><banner>Browser sign-in required</banner><sso-v2-login>https://browser.invalid/login</sso-v2-login><sso-v2-login-final>https://browser.invalid/complete</sso-v2-login-final><sso-v2-token-cookie-name>webvpn</sso-v2-token-cookie-name><form method="POST" action="/auth"><input type="sso" name="sso-token"/></form></auth></config-auth>`
+
+const fakeHostScanAuthForm = `<?xml version="1.0" encoding="UTF-8"?>
+<config-auth><host-scan><host-scan-ticket>ticket-secret</host-scan-ticket><host-scan-token>token-secret</host-scan-token><host-scan-base-uri>/+CSCOE+/sdesktop</host-scan-base-uri><host-scan-wait-uri>/+CSCOE+/sdesktop/wait.html</host-scan-wait-uri></host-scan><auth id="main"><form method="POST" action="/auth"><input type="text" name="username" label="Username"/></form></auth></config-auth>`
