@@ -1,0 +1,348 @@
+//go:build anyconnect_ocserv
+
+package anyconnect
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"net"
+	"net/netip"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	openconnect "github.com/sagernet/sing-openconnect"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
+)
+
+const (
+	ocservImage    = "mihomo-anyconnect-ocserv:1.3.0-2"
+	ocservUsername = "test"
+	ocservPassword = "test"
+)
+
+func TestOCServFixture(t *testing.T) {
+	if os.Getenv("MIHOMO_ANYCONNECT_OCSERV") != "1" {
+		t.Fatal("anyconnect_ocserv tag requires MIHOMO_ANYCONNECT_OCSERV=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	fixtureDirectory := t.TempDir()
+	roots := writeOCServFixture(t, fixtureDirectory)
+	runDocker(t, ctx, "build", "--pull=false", "--tag", ocservImage, filepath.Join("testdata", "ocserv"))
+	containerID := strings.TrimSpace(runDocker(t, ctx,
+		"run", "--detach", "--rm",
+		"--cap-add", "NET_ADMIN",
+		"--device", "/dev/net/tun",
+		"--mount", "type=bind,src="+fixtureDirectory+",dst=/fixture,readonly",
+		"--publish", "127.0.0.1::443/tcp",
+		"--publish", "127.0.0.1::443/udp",
+		ocservImage,
+	))
+	if containerID == "" {
+		t.Fatal("docker run returned an empty ocserv container ID")
+	}
+	t.Cleanup(func() {
+		cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		_ = exec.CommandContext(cleanupContext, "docker", "rm", "--force", containerID).Run()
+	})
+	tcpAddress := waitForOCServAddress(t, ctx, containerID, "443/tcp", true)
+	udpAddress := waitForOCServAddress(t, ctx, containerID, "443/udp", false)
+	dialer := tls.Dialer{Config: &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ServerName: fakeGatewayServerName,
+		RootCAs:    roots,
+	}}
+	var connection net.Conn
+	var err error
+	readyContext, readyCancel := context.WithTimeout(ctx, 15*time.Second)
+	defer readyCancel()
+	for {
+		connection, err = dialer.DialContext(readyContext, "tcp", tcpAddress)
+		if err == nil {
+			break
+		}
+		select {
+		case <-readyContext.Done():
+			logs := runDocker(t, ctx, "logs", containerID)
+			t.Fatalf("verify ocserv TLS listener: %v\n%s", err, logs)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if err := connection.Close(); err != nil {
+		t.Fatal(err)
+	}
+	testOCServCoreDriver(t, ctx, tcpAddress, udpAddress, roots)
+	for _, capability := range []Capability{CapabilityModernDTLS, CapabilityPacketIPv4} {
+		if err := phase0CapabilityMatrix.Record(Evidence{
+			Capability: capability,
+			Scenario:   "username-password-modern-dtls",
+			Driver:     DriverCore,
+			Gateway:    "ocserv-1.3.0-2",
+			Transport:  openconnect.TransportDTLS,
+			Address:    "ipv4",
+			Passed:     true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func writeOCServFixture(t *testing.T, directory string) *x509.CertPool {
+	t.Helper()
+	certificatePEM, keyPEM, roots := newOCServCertificate(t)
+	configuration := `auth = "plain[passwd=/fixture/ocpasswd]"
+
+tcp-port = 443
+udp-port = 443
+run-as-user = nobody
+run-as-group = nogroup
+socket-file = /run/ocserv-socket
+server-cert = /fixture/server-cert.pem
+server-key = /fixture/server-key.pem
+tls-priorities = "NORMAL:%SERVER_PRECEDENCE:%COMPAT"
+isolate-workers = false
+max-clients = 4
+max-same-clients = 2
+rate-limit-ms = 0
+auth-timeout = 30
+cookie-timeout = 300
+keepalive = 60
+dpd = 30
+try-mtu-discovery = false
+device = vpns
+ipv4-network = 192.168.77.0
+ipv4-netmask = 255.255.255.0
+route = 192.168.77.0/255.255.255.0
+ping-leases = false
+mtu = 1400
+cisco-client-compat = false
+dtls-psk = true
+dtls-legacy = false
+match-tls-dtls-ciphers = false
+`
+	files := map[string][]byte{
+		"ocserv.conf":     []byte(configuration),
+		"ocpasswd":        []byte("test:users:$5$i6SNmLDCgBNjyJ7q$SZ4bVJb7I/DLgXo3txHBVohRFBjOtdbxGQZp.DOnrA.\n"),
+		"server-cert.pem": certificatePEM,
+		"server-key.pem":  keyPEM,
+	}
+	for name, content := range files {
+		mode := os.FileMode(0o600)
+		if name == "ocserv.conf" {
+			mode = 0o644
+		}
+		if err := os.WriteFile(filepath.Join(directory, name), content, mode); err != nil {
+			t.Fatalf("write ocserv fixture %s: %v", name, err)
+		}
+	}
+	return roots
+}
+
+func newOCServCertificate(t *testing.T) ([]byte, []byte, *x509.CertPool) {
+	t.Helper()
+	now := time.Now()
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "mihomo ocserv test CA"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCertificate, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: fakeGatewayServerName},
+		DNSNames:     []string{fakeGatewayServerName},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caCertificate, &serverKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(serverKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(caCertificate)
+	certificatePEM := append(
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}),
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})...,
+	)
+	return certificatePEM, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), roots
+}
+
+func waitForOCServAddress(t *testing.T, ctx context.Context, containerID string, port string, waitForTCP bool) string {
+	t.Helper()
+	for {
+		output, err := dockerOutput(ctx, "port", containerID, port)
+		if err == nil {
+			address := strings.TrimSpace(output)
+			if _, _, splitErr := net.SplitHostPort(address); splitErr == nil {
+				if !waitForTCP {
+					return address
+				}
+				connection, dialErr := net.DialTimeout("tcp", address, 250*time.Millisecond)
+				if dialErr == nil {
+					_ = connection.Close()
+					return address
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			logs, _ := dockerOutput(context.Background(), "logs", containerID)
+			t.Fatalf("wait for ocserv listener: %v\n%s", ctx.Err(), logs)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+type ocservDTLSDialer struct {
+	udpDestination M.Socksaddr
+}
+
+func (d *ocservDTLSDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if network == N.NetworkUDP {
+		destination = d.udpDestination
+	}
+	return N.SystemDialer.DialContext(ctx, network, destination)
+}
+
+func (d *ocservDTLSDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return N.SystemDialer.ListenPacket(ctx, destination)
+}
+
+func testOCServCoreDriver(t *testing.T, ctx context.Context, tcpAddress string, udpAddress string, roots *x509.CertPool) {
+	t.Helper()
+	_, tcpPort, err := net.SplitHostPort(tcpAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configurationEvents := make(chan openconnect.TunnelConfigurationEvent, 1)
+	client, err := openconnect.NewClient(openconnect.ClientOptions{
+		Context:  ctx,
+		Server:   "https://" + fakeGatewayServerName + ":" + tcpPort,
+		Username: ocservUsername,
+		Password: ocservPassword,
+		Dialer:   &ocservDTLSDialer{udpDestination: M.ParseSocksaddr(udpAddress)},
+		TLSConfig: openconnect.ClientTLSOptions{Config: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ServerName: fakeGatewayServerName,
+			RootCAs:    roots,
+		}},
+		OnTunnelConfiguration: func(event openconnect.TunnelConfigurationEvent) error {
+			select {
+			case configurationEvents <- event:
+			default:
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	activeTransportUpdated := client.ActiveTransportUpdated()
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var configuration openconnect.TunnelConfiguration
+	select {
+	case event := <-configurationEvents:
+		configuration = event.Configuration
+	case <-ctx.Done():
+		t.Fatalf("wait for ocserv configuration: %v", ctx.Err())
+	}
+	for client.ActiveTransport() != openconnect.TransportDTLS {
+		select {
+		case <-activeTransportUpdated:
+			activeTransportUpdated = client.ActiveTransportUpdated()
+		case <-ctx.Done():
+			t.Fatalf("wait for ocserv DTLS: %v", ctx.Err())
+		}
+	}
+	var clientAddress netip.Addr
+	for _, prefix := range configuration.Addresses {
+		if prefix.Addr().Is4() {
+			clientAddress = prefix.Addr()
+			break
+		}
+	}
+	if !clientAddress.IsValid() {
+		t.Fatalf("ocserv did not assign an IPv4 address: %#v", configuration.Addresses)
+	}
+	request, err := BuildIPv4ICMPEchoRequest(clientAddress, netip.MustParseAddr("192.168.77.1"), 23, 29, []byte("mihomo-ocserv-dtls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.WriteDataPacket(request); err != nil {
+		t.Fatal(err)
+	}
+	readContext, cancelRead := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelRead()
+	for {
+		reply, readErr := client.ReadDataPacket(readContext)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if len(reply) >= 28 && reply[20] == 0 && string(reply[28:]) == "mihomo-ocserv-dtls" {
+			break
+		}
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runDocker(t *testing.T, ctx context.Context, arguments ...string) string {
+	t.Helper()
+	output, err := dockerOutput(ctx, arguments...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return output
+}
+
+func dockerOutput(ctx context.Context, arguments ...string) (string, error) {
+	command := exec.CommandContext(ctx, "docker", arguments...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("docker %s: %w: %s", strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
+	}
+	return string(output), nil
+}
