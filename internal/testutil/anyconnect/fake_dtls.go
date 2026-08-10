@@ -81,6 +81,12 @@ func (g *Gateway) releaseDTLSSession() {
 	clear(g.dtlsMasterSecret)
 	g.dtlsMasterSecret = nil
 	g.pskLock.Unlock()
+	g.legacyLock.Lock()
+	if g.legacySession != nil {
+		g.legacySession.destroy()
+	}
+	g.legacySession = nil
+	g.legacyLock.Unlock()
 	g.dropDTLSConnections(false)
 }
 

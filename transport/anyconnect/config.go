@@ -58,6 +58,7 @@ type Config struct {
 	IPv6                 bool
 	Compression          string
 	DTLSMode             string
+	LegacyDTLS           bool
 	DPDInterval          time.Duration
 	ReconnectTimeout     time.Duration
 	QueueLength          uint32
@@ -139,6 +140,9 @@ func (c Config) validate(hasAuthProvider bool) error {
 	case "", DTLSModeOff, DTLSModeAuto, DTLSModeRequire:
 	default:
 		return invalidConfig("DTLS mode must be off, auto, or require")
+	}
+	if c.LegacyDTLS && c.DTLSMode == DTLSModeOff {
+		return invalidConfig("legacy DTLS requires DTLS mode auto or require")
 	}
 	for _, entry := range c.FormEntries {
 		if entry.SubmissionKey == "" && (entry.FormID == "" || entry.Name == "") {

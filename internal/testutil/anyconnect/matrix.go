@@ -19,6 +19,7 @@ const (
 	CapabilityPacketIPv4  Capability = "packet-ipv4"
 	CapabilityPacketIPv6  Capability = "packet-ipv6"
 	CapabilityModernDTLS  Capability = "modern-dtls"
+	CapabilityLegacyDTLS  Capability = "legacy-dtls-0.9"
 	CapabilityFallback    Capability = "cstp-fallback"
 	CapabilityTLSVerify   Capability = "tls-verification"
 	CapabilityFraming     Capability = "cstp-framing-rejection"

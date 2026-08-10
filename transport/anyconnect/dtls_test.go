@@ -10,6 +10,7 @@ import (
 	"time"
 
 	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
+	openconnect "github.com/sagernet/sing-openconnect"
 )
 
 type dtlsTestDialer struct {
@@ -307,6 +308,116 @@ func TestClientDTLSInjectedResumption(t *testing.T) {
 	exchangeFacadeICMP(t, ctx, client, "injected-resumption")
 }
 
+func TestClientLegacyDTLSOptInAndDowngradePolicy(t *testing.T) {
+	scenario := testanyconnect.BasicCSTPScenario()
+	scenario.LegacyDTLS = true
+
+	t.Run("explicit opt in", func(t *testing.T) {
+		client, gateway, _, ctx := newDTLSTestClientForScenario(t, scenario, DTLSModeRequire, false, "")
+		defer func() { _ = client.Close() }()
+		defer func() { _ = gateway.Close() }()
+		if _, err := client.WaitReady(ctx); err != nil {
+			t.Fatal(err)
+		}
+		waitForTransportEvent(t, ctx, client, "dtls")
+		if !gateway.LegacyDTLSHandshakeObserved() {
+			t.Fatal("fake gateway did not validate the legacy BAD_VER CCS/Finished flight")
+		}
+		if !gateway.LegacyDTLSOffered() {
+			t.Fatal("explicit legacy opt-in did not advertise the legacy cipher")
+		}
+		exchangeFacadeICMP(t, ctx, client, "legacy-dtls")
+	})
+
+	t.Run("default rejects downgrade", func(t *testing.T) {
+		client, gateway, _, ctx := newDTLSTestClientForScenarioWithLegacy(t, scenario, DTLSModeRequire, false, "", false)
+		defer func() { _ = client.Close() }()
+		defer func() { _ = gateway.Close() }()
+		if _, err := client.WaitReady(ctx); !errors.Is(err, openconnect.ErrDeprecatedCryptoDisabled) {
+			t.Fatalf("legacy downgrade returned %v", err)
+		}
+		if client.ActiveTransport() == "dtls" {
+			t.Fatal("default client accepted a legacy DTLS downgrade")
+		}
+		if gateway.LegacyDTLSOffered() {
+			t.Fatal("default client advertised a legacy cipher")
+		}
+	})
+}
+
+func TestClientLegacyDTLSSecurityFaults(t *testing.T) {
+	for _, fault := range []string{"downgrade-version", "unsupported-cipher", "bad-finished"} {
+		t.Run(fault, func(t *testing.T) {
+			scenario := testanyconnect.BasicCSTPScenario()
+			scenario.LegacyDTLS = true
+			scenario.LegacyDTLSFault = fault
+			client, gateway, _, ctx := newDTLSTestClientForScenario(t, scenario, DTLSModeRequire, false, "")
+			defer func() { _ = client.Close() }()
+			defer func() { _ = gateway.Close() }()
+			waitCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+			defer cancel()
+			if _, err := client.WaitReady(waitCtx); !errors.Is(err, ErrDTLSRequired) {
+				t.Fatalf("legacy DTLS accepted %s: %v", fault, err)
+			}
+		})
+	}
+
+	for _, fault := range []string{"bad-data-mac", "bad-padding"} {
+		t.Run(fault, func(t *testing.T) {
+			scenario := testanyconnect.BasicCSTPScenario()
+			scenario.LegacyDTLS = true
+			scenario.LegacyDTLSFault = fault
+			client, gateway, _, ctx := newDTLSTestClientForScenario(t, scenario, DTLSModeAuto, false, "")
+			defer func() { _ = client.Close() }()
+			defer func() { _ = gateway.Close() }()
+			if _, err := client.WaitReady(ctx); err != nil {
+				t.Fatal(err)
+			}
+			waitForTransportEvent(t, ctx, client, "dtls")
+			writeFacadeICMP(t, client, 1, fault)
+			waitForTransportEvent(t, ctx, client, "cstp")
+			exchangeFacadeICMP(t, ctx, client, "fallback-"+fault)
+		})
+	}
+
+	t.Run("duplicate and replay", func(t *testing.T) {
+		scenario := testanyconnect.BasicCSTPScenario()
+		scenario.LegacyDTLS = true
+		scenario.LegacyDTLSFault = "duplicate-data"
+		client, gateway, _, ctx := newDTLSTestClientForScenario(t, scenario, DTLSModeAuto, false, "")
+		defer func() { _ = client.Close() }()
+		defer func() { _ = gateway.Close() }()
+		if _, err := client.WaitReady(ctx); err != nil {
+			t.Fatal(err)
+		}
+		waitForTransportEvent(t, ctx, client, "dtls")
+		exchangeFacadeICMP(t, ctx, client, "only-once")
+		readCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		defer cancel()
+		if packet, err := client.ReadPacket(readCtx); err == nil {
+			t.Fatalf("legacy replay produced a second packet: %x", packet)
+		}
+	})
+
+	t.Run("out of order records", func(t *testing.T) {
+		scenario := testanyconnect.BasicCSTPScenario()
+		scenario.LegacyDTLS = true
+		scenario.LegacyDTLSFault = "reorder-data"
+		client, gateway, _, ctx := newDTLSTestClientForScenario(t, scenario, DTLSModeAuto, false, "")
+		defer func() { _ = client.Close() }()
+		defer func() { _ = gateway.Close() }()
+		if _, err := client.WaitReady(ctx); err != nil {
+			t.Fatal(err)
+		}
+		waitForTransportEvent(t, ctx, client, "dtls")
+		writeFacadeICMP(t, client, 1, "first")
+		writeFacadeICMP(t, client, 2, "second")
+		if first, second := readFacadeICMP(t, ctx, client), readFacadeICMP(t, ctx, client); first != "second" || second != "first" {
+			t.Fatalf("legacy out-of-order records were not delivered safely: first=%q second=%q", first, second)
+		}
+	})
+}
+
 func newDTLSTestClient(t *testing.T, mode string, failUDP bool, fault string) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
 	t.Helper()
 	scenario := testanyconnect.BasicCSTPScenario()
@@ -317,6 +428,10 @@ func newDTLSTestClient(t *testing.T, mode string, failUDP bool, fault string) (*
 }
 
 func newDTLSTestClientForScenario(t *testing.T, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
+	return newDTLSTestClientForScenarioWithLegacy(t, scenario, mode, failUDP, fault, scenario.LegacyDTLS)
+}
+
+func newDTLSTestClientForScenarioWithLegacy(t *testing.T, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string, legacyDTLS bool) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	t.Cleanup(cancel)
@@ -339,6 +454,7 @@ func newDTLSTestClientForScenario(t *testing.T, scenario testanyconnect.Scenario
 		ServerName:           gateway.ServerName(),
 		CertificateAuthority: testanyconnect.RootCAPEM(),
 		DTLSMode:             mode,
+		LegacyDTLS:           legacyDTLS,
 	}, dialer, nil)
 	if err != nil {
 		t.Fatal(err)
