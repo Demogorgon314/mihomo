@@ -30,6 +30,8 @@ import (
 
 const echoPeerNIC tcpip.NICID = 1
 
+const echoPeerResponseTimeout = 250 * time.Millisecond
+
 // IPv4TCPUDPEchoPeer terminates TCP and UDP flows in an independent gVisor
 // stack and exposes its link as raw packets to the fake gateway.
 type IPv4TCPUDPEchoPeer struct {
@@ -266,7 +268,7 @@ func (p *IPv4TCPUDPEchoPeer) HandlePackets(packet []byte) ([][]byte, error) {
 	packetBuffer := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(packet)})
 	p.endpoint.InjectInbound(p.protocol, packetBuffer)
 	packetBuffer.DecRef()
-	readContext, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	readContext, cancel := context.WithTimeout(context.Background(), echoPeerResponseTimeout)
 	defer cancel()
 	first := p.endpoint.ReadContext(readContext)
 	if first == nil {
