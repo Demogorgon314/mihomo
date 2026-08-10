@@ -81,17 +81,19 @@ func (g *Gateway) handleDTLSConnection(connection net.Conn) error {
 		}
 		switch packet[0] {
 		case cstpPacketData:
-			reply, peerErr := g.peer.HandlePacket(packet[1:length])
+			replies, peerErr := handlePeerPackets(g.peer, packet[1:length])
 			if peerErr != nil {
 				return fmt.Errorf("handle DTLS tunneled packet: %w", peerErr)
 			}
-			response := make([]byte, len(reply)+1)
-			response[0] = cstpPacketData
-			copy(response[1:], reply)
-			if _, writeErr := connection.Write(response); writeErr != nil {
-				return fmt.Errorf("write fake DTLS data packet: %w", writeErr)
+			for _, reply := range replies {
+				response := make([]byte, len(reply)+1)
+				response[0] = cstpPacketData
+				copy(response[1:], reply)
+				if _, writeErr := connection.Write(response); writeErr != nil {
+					return fmt.Errorf("write fake DTLS data packet: %w", writeErr)
+				}
+				g.record("dtls-data", fmt.Sprintf("replied with %d-byte packet", len(reply)))
 			}
-			g.record("dtls-data", fmt.Sprintf("replied with %d-byte packet", len(reply)))
 		case cstpPacketDPDRequest:
 			if _, writeErr := connection.Write([]byte{cstpPacketDPDResponse}); writeErr != nil {
 				return fmt.Errorf("write fake DTLS DPD response: %w", writeErr)
