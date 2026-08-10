@@ -3,9 +3,11 @@ package anyconnect
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	_ "embed"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -148,6 +150,25 @@ func (g *Gateway) RootCAs() *x509.CertPool {
 	return g.roots.Clone()
 }
 
+// RootCAPEM returns a caller-owned copy of the fixed fake gateway CA.
+func RootCAPEM() []byte {
+	return append([]byte(nil), fakeGatewayCAPEM...)
+}
+
+// ServerSPKISHA256 returns the fake gateway server's OpenConnect pin form.
+func ServerSPKISHA256() (string, error) {
+	block, _ := pem.Decode(fakeGatewayServerPEM)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return "", errors.New("decode fake gateway server certificate")
+	}
+	certificate, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", fmt.Errorf("parse fake gateway server certificate: %w", err)
+	}
+	digest := sha256.Sum256(certificate.RawSubjectPublicKeyInfo)
+	return fmt.Sprintf("sha256:%x", digest), nil
+}
+
 // Close stops the listener, waits for handlers, and returns unexpected server failures.
 func (g *Gateway) Close() error {
 	if g == nil {
@@ -253,6 +274,15 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 		}
 		defer g.releaseDTLSSession()
 	}
+	if delay := g.scenario.CSTP.ResponseDelay; delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-g.ctx.Done():
+			return nil
+		}
+	}
 	if err := g.writeConnectResponse(connection); err != nil {
 		return err
 	}
@@ -270,18 +300,20 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 		}
 		switch frame.packetType {
 		case cstpPacketData:
-			reply, peerErr := g.peer.HandlePacket(frame.payload)
+			replies, peerErr := handlePeerPackets(g.peer, frame.payload)
 			if peerErr != nil {
 				return fmt.Errorf("handle tunneled packet: %w", peerErr)
 			}
-			if g.scenario.CSTP.MalformedDataHeader {
-				malformed := append([]byte("BAD!\x00\x00\x00\x00"), reply...)
-				return writeFull(connection, malformed)
+			for _, reply := range replies {
+				if g.scenario.CSTP.MalformedDataHeader {
+					malformed := append([]byte("BAD!\x00\x00\x00\x00"), reply...)
+					return writeFull(connection, malformed)
+				}
+				if writeErr := writeCSTPFrame(connection, cstpPacketData, reply); writeErr != nil {
+					return writeErr
+				}
+				g.record("cstp-data", fmt.Sprintf("replied with %d-byte packet", len(reply)))
 			}
-			if writeErr := writeCSTPFrame(connection, cstpPacketData, reply); writeErr != nil {
-				return writeErr
-			}
-			g.record("cstp-data", fmt.Sprintf("replied with %d-byte packet", len(reply)))
 		case cstpPacketDPDRequest:
 			if writeErr := writeCSTPFrame(connection, cstpPacketDPDResponse, frame.payload); writeErr != nil {
 				return writeErr

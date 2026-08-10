@@ -28,6 +28,7 @@ type AuthProbeOptions struct {
 type authProbeDocument struct {
 	SessionToken string `xml:"session-token"`
 	Auth         struct {
+		ID       string    `xml:"id,attr"`
 		Complete *struct{} `xml:"authentication-complete"`
 		Form     *struct {
 			Method string `xml:"method,attr"`
@@ -77,8 +78,8 @@ func RunAuthProbe(ctx context.Context, options AuthProbeOptions) (string, error)
 	if err != nil {
 		return "", err
 	}
-	for round := 0; round < 2; round++ {
-		if document.Auth.Complete != nil {
+	for round := 0; round < 8; round++ {
+		if document.Auth.Complete != nil || document.Auth.ID == "success" {
 			return authProbeCookie(jar, finalURL, document.SessionToken)
 		}
 		if document.Auth.Form == nil || !strings.EqualFold(document.Auth.Form.Method, http.MethodPost) || document.Auth.Form.Action == "" {
@@ -107,7 +108,7 @@ func RunAuthProbe(ctx context.Context, options AuthProbeOptions) (string, error)
 			return "", err
 		}
 	}
-	if document.Auth.Complete == nil {
+	if document.Auth.Complete == nil && document.Auth.ID != "success" {
 		return "", fmt.Errorf("authentication probe exceeded form round limit")
 	}
 	return authProbeCookie(jar, finalURL, document.SessionToken)

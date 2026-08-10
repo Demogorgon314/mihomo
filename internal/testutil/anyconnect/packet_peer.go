@@ -14,6 +14,21 @@ type PacketPeer interface {
 	HandlePacket(packet []byte) ([]byte, error)
 }
 
+type packetBatchPeer interface {
+	HandlePackets(packet []byte) ([][]byte, error)
+}
+
+func handlePeerPackets(peer PacketPeer, packet []byte) ([][]byte, error) {
+	if batchPeer, ok := peer.(packetBatchPeer); ok {
+		return batchPeer.HandlePackets(packet)
+	}
+	reply, err := peer.HandlePacket(packet)
+	if err != nil || len(reply) == 0 {
+		return nil, err
+	}
+	return [][]byte{reply}, nil
+}
+
 // IPv4ICMPEchoPeer replies to valid ICMP echo requests addressed to it.
 type IPv4ICMPEchoPeer struct {
 	address netip.Addr
