@@ -29,6 +29,10 @@ const (
 	CapabilityDPD         Capability = "dead-peer-detection"
 	CapabilityRekey       Capability = "cstp-rekey"
 	CapabilityCompression Capability = "compression"
+	CapabilityReauth      Capability = "cookie-reauthentication"
+	CapabilityNetworkMTU  Capability = "network-mtu-change"
+	CapabilityRoutes      Capability = "negotiated-routes"
+	CapabilityUnderlay    Capability = "underlay-switch"
 )
 
 // Driver identifies the client layer exercised by evidence.

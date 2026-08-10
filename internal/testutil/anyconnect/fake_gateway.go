@@ -388,7 +388,8 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 		}
 	}
 	configuration := g.scenario.Configuration
-	if g.cstpAttempts.Add(1) > 1 && g.scenario.CSTP.ReconnectConfiguration != nil {
+	cstpAttempt := g.cstpAttempts.Add(1)
+	if cstpAttempt > 1 && g.scenario.CSTP.ReconnectConfiguration != nil {
 		configuration = *g.scenario.CSTP.ReconnectConfiguration
 	}
 	if err := g.writeConnectResponse(connection, configuration); err != nil {
@@ -440,6 +441,10 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 				g.record("cstp-data", fmt.Sprintf("replied with %d-byte packet", len(reply)))
 			}
 		case cstpPacketDPDRequest:
+			if g.scenario.CSTP.BlackholeDPD && cstpAttempt == 1 {
+				g.record("cstp-dpd-blackhole", "ignored dead-peer probe")
+				continue
+			}
 			g.record("cstp-dpd", "answered dead-peer probe")
 			if writeErr := writeCSTPFrame(connection, cstpPacketDPDResponse, frame.payload); writeErr != nil {
 				return writeErr
