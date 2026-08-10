@@ -31,6 +31,7 @@ type CSTPFaults struct {
 	RejectStatus           int
 	ResponseChunkSize      int
 	MalformedDataHeader    bool
+	BlackholeDPD           bool
 	CompressedPackets      [][]byte
 	ReconnectConfiguration *NetworkConfiguration
 	RekeyInterval          time.Duration
