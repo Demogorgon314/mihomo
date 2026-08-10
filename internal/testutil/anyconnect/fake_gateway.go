@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	_ "embed"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -48,6 +49,7 @@ type Gateway struct {
 	conns                map[net.Conn]struct{}
 	pskLock              sync.RWMutex
 	psk                  []byte
+	dtlsMasterSecret     []byte
 	dtlsOwnerActive      bool
 	authLock             sync.Mutex
 	authGeneration       uint64
@@ -58,6 +60,12 @@ type Gateway struct {
 	cstpConnections      map[net.Conn]struct{}
 	cstpDropped          map[net.Conn]struct{}
 	cstpAttempts         atomic.Uint64
+	dtlsConnLock         sync.Mutex
+	dtlsConnections      map[net.Conn]struct{}
+	dtlsDropped          map[net.Conn]struct{}
+	dtlsBlackhole        atomic.Bool
+	dtlsAppIDObserved    atomic.Bool
+	dtlsResumeObserved   atomic.Bool
 }
 
 var (
@@ -110,9 +118,11 @@ func StartGateway(parent context.Context, scenario Scenario, peer PacketPeer, re
 		conns:           make(map[net.Conn]struct{}),
 		cstpConnections: make(map[net.Conn]struct{}),
 		cstpDropped:     make(map[net.Conn]struct{}),
+		dtlsConnections: make(map[net.Conn]struct{}),
+		dtlsDropped:     make(map[net.Conn]struct{}),
 	}
 	if scenario.ModernDTLS {
-		gateway.dtlsListener, err = dtls.ListenWithOptions("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")},
+		dtlsOptions := []dtls.ServerOption{
 			dtls.WithPSK(gateway.dtlsPSK),
 			dtls.WithPSKIdentityHint([]byte("psk")),
 			dtls.WithCipherSuites(
@@ -120,7 +130,12 @@ func StartGateway(parent context.Context, scenario Scenario, peer PacketPeer, re
 				dtls.TLS_PSK_WITH_AES_128_GCM_SHA256,
 				dtls.TLS_PSK_WITH_AES_128_CCM,
 			),
-		)
+			dtls.WithSessionStore(gateway),
+		}
+		if scenario.InjectedDTLS {
+			dtlsOptions = append(dtlsOptions, dtls.WithExtendedMasterSecret(dtls.DisableExtendedMasterSecret))
+		}
+		gateway.dtlsListener, err = dtls.ListenWithOptions("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")}, dtlsOptions...)
 		if err != nil {
 			cancel()
 			_ = listener.Close()
@@ -315,7 +330,17 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 		if exportErr != nil {
 			return fmt.Errorf("export fake DTLS PSK: %w", exportErr)
 		}
-		if !g.claimDTLSSession(psk) {
+		var masterSecret []byte
+		if masterSecretHeader := request.Header.Get("X-DTLS-Master-Secret"); masterSecretHeader != "" {
+			decodedMasterSecret, decodeErr := hex.DecodeString(masterSecretHeader)
+			masterSecret = decodedMasterSecret
+			if decodeErr != nil || len(masterSecret) != 48 {
+				return errors.New("fake CSTP request did not contain a valid DTLS master secret")
+			}
+		} else if g.scenario.InjectedDTLS {
+			return errors.New("injected DTLS request did not contain a master secret")
+		}
+		if !g.claimDTLSSession(psk, masterSecret) {
 			return writeHTTPRejection(connection, http.StatusConflict)
 		}
 		defer g.releaseDTLSSession()
@@ -478,11 +503,25 @@ func (g *Gateway) writeConnectResponse(connection net.Conn, configuration Networ
 		if err != nil {
 			return fmt.Errorf("parse fake DTLS port: %w", err)
 		}
-		response.WriteString("X-DTLS12-CipherSuite: PSK-NEGOTIATE\r\n")
+		if g.scenario.InjectedDTLS {
+			response.WriteString("X-DTLS12-CipherSuite: OC2-DTLS1_2-CHACHA20-POLY1305\r\nX-DTLS12-Session-ID: ")
+			response.WriteString(hex.EncodeToString(fakeDTLSSessionID()))
+			response.WriteString("\r\n")
+		} else {
+			response.WriteString("X-DTLS12-CipherSuite: PSK-NEGOTIATE\r\n")
+		}
 		response.WriteString("X-DTLS12-Port: ")
 		response.WriteString(port)
 		response.WriteString("\r\nX-DTLS12-MTU: ")
-		response.WriteString(strconv.Itoa(int(configuration.MTU)))
+		dtlsMTU := configuration.MTU
+		if g.scenario.DTLSMTU != 0 {
+			dtlsMTU = g.scenario.DTLSMTU
+		}
+		response.WriteString(strconv.Itoa(int(dtlsMTU)))
+		if len(g.scenario.DTLSAppID) > 0 {
+			response.WriteString("\r\nX-DTLS-App-ID: ")
+			response.WriteString(hex.EncodeToString(g.scenario.DTLSAppID))
+		}
 		response.WriteString("\r\n")
 	}
 	response.WriteString("X-CSTP-Keepalive: 30\r\nX-CSTP-DPD: 30\r\n\r\n")
@@ -530,6 +569,7 @@ func writeHTTPRejection(writer net.Conn, status int) error {
 
 func cloneScenario(scenario Scenario) Scenario {
 	scenario.Configuration = cloneNetworkConfiguration(scenario.Configuration)
+	scenario.DTLSAppID = append([]byte(nil), scenario.DTLSAppID...)
 	if scenario.CSTP.ReconnectConfiguration != nil {
 		configuration := cloneNetworkConfiguration(*scenario.CSTP.ReconnectConfiguration)
 		scenario.CSTP.ReconnectConfiguration = &configuration

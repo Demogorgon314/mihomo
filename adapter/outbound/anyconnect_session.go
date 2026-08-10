@@ -52,6 +52,7 @@ type acClient interface {
 	WaitReady(ctx context.Context) (ac.NetworkConfig, error)
 	ReadPacket(ctx context.Context) ([]byte, error)
 	WritePacket(packet []byte) error
+	ActiveTransport() string
 	Close() error
 }
 

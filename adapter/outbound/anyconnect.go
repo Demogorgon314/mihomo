@@ -114,8 +114,8 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 	if len(option.Dns) > 0 && !option.RemoteDnsResolve {
 		return nil, errors.New("anyconnect DNS override requires remote-dns-resolve")
 	}
-	if option.DTLSMode != "" && option.DTLSMode != "off" {
-		return nil, fmt.Errorf("unsupported anyconnect DTLS mode %q; only off is available", option.DTLSMode)
+	if option.DTLSMode != "" && option.DTLSMode != ac.DTLSModeOff && option.DTLSMode != ac.DTLSModeAuto && option.DTLSMode != ac.DTLSModeRequire {
+		return nil, fmt.Errorf("unsupported anyconnect DTLS mode %q; expected off, auto, or require", option.DTLSMode)
 	}
 	address := net.JoinHostPort(option.Server, fmt.Sprint(option.Port))
 	config := ac.Config{
@@ -139,6 +139,7 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 		QueueLength:          option.QueueLength,
 		DPDInterval:          time.Duration(option.DPDInterval) * time.Second,
 		ReconnectTimeout:     time.Duration(option.ReconnectTimeout) * time.Second,
+		DTLSMode:             option.DTLSMode,
 	}
 	if option.TokenMode != "" || option.TokenSecret != "" || option.TokenCounter != 0 || option.TokenCounterUpdate != nil {
 		config.Token = &ac.TokenConfig{

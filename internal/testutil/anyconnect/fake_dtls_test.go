@@ -8,10 +8,10 @@ import (
 func TestGatewayDTLSSessionOwnership(t *testing.T) {
 	gateway := new(Gateway)
 	firstKey := []byte("first-session-key")
-	if !gateway.claimDTLSSession(firstKey) {
+	if !gateway.claimDTLSSession(firstKey, nil) {
 		t.Fatal("first DTLS session was rejected")
 	}
-	if gateway.claimDTLSSession([]byte("second-session-key")) {
+	if gateway.claimDTLSSession([]byte("second-session-key"), nil) {
 		t.Fatal("concurrent DTLS session replaced the active PSK")
 	}
 	storedKey, err := gateway.dtlsPSK(nil)
@@ -33,7 +33,7 @@ func TestGatewayDTLSSessionOwnership(t *testing.T) {
 	if _, err := gateway.dtlsPSK(nil); err == nil {
 		t.Fatal("released DTLS session retained its PSK")
 	}
-	if !gateway.claimDTLSSession([]byte("replacement-key")) {
+	if !gateway.claimDTLSSession([]byte("replacement-key"), nil) {
 		t.Fatal("replacement DTLS session was rejected after release")
 	}
 }

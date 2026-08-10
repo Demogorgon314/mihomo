@@ -50,7 +50,7 @@ func TestClientStaticCredentialsAndFormEntry(t *testing.T) {
 	for {
 		select {
 		case event := <-client.Events():
-			if event.Type != EventNetworkConfig {
+			if event.Type != EventNetworkConfig && event.Type != EventActiveTransport {
 				t.Fatalf("static authentication unexpectedly emitted an auth event: %#v", event)
 			}
 		default:
