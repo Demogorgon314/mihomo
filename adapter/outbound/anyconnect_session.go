@@ -22,7 +22,9 @@ import (
 
 // Keep outbound DTLS writes one packet at a time. Some AnyConnect gateways
 // continue answering DPD while silently dropping DATA after batched UDP sends.
-const anyConnectOutboundPacketBatchSize = 1
+// Keep sendmmsg batches deliberately small. Larger bursts have caused
+// interoperability failures with real AnyConnect gateways.
+const anyConnectOutboundPacketBatchSize = 2
 
 type anyConnectGeneration struct {
 	device          wireguard.Device
