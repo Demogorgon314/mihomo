@@ -160,6 +160,6 @@ require (
 // for https://github.com/golang/protobuf/issues/1704
 replace google.golang.org/protobuf => github.com/metacubex/protobuf-go v0.0.0-20260306035419-7ceee0674686
 
-replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-openconnect v0.0.0-20260811113959-190b02186e2c
+replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-openconnect v0.0.0-20260811115816-a533d1f8d76b
 
 replace github.com/pion/dtls/v3 => github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811111740-6a163b49de7c
