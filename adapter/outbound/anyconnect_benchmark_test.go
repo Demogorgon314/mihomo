@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"runtime"
 	"testing"
 	"time"
 
@@ -108,13 +109,33 @@ func BenchmarkAnyConnectDataPlaneE2E(b *testing.B) {
 			if transport := session.client.ActiveTransport(); transport != "dtls" {
 				b.Fatalf("benchmark left DTLS transport: %q", transport)
 			}
-			if actual := recorder.Count("dtls-data") - baselineDTLS; actual != uint64(b.N) {
+			actual := waitAnyConnectBenchmarkRecordCount(ctx, recorder, "dtls-data", baselineDTLS+uint64(b.N)) - baselineDTLS
+			if actual != uint64(b.N) {
 				b.Fatalf("gateway DTLS packet count mismatch: got %d, want %d", actual, b.N)
 			}
 			if actual := recorder.Count("cstp-data"); actual != baselineCSTP {
 				b.Fatalf("benchmark leaked data over CSTP: before=%d after=%d", baselineCSTP, actual)
 			}
 		})
+	}
+}
+
+func waitAnyConnectBenchmarkRecordCount(ctx context.Context, recorder *testanyconnect.Recorder, kind string, expected uint64) uint64 {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	for {
+		actual := recorder.Count(kind)
+		if actual >= expected {
+			return actual
+		}
+		select {
+		case <-ctx.Done():
+			return actual
+		case <-timer.C:
+			return actual
+		default:
+			runtime.Gosched()
+		}
 	}
 }
 
