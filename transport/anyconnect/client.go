@@ -362,10 +362,16 @@ func (c *Client) WritePacket(packet []byte) error {
 // WritePacketAtRevision writes a packet only while revision still identifies
 // the active data plane.
 func (c *Client) WritePacketAtRevision(packet []byte, revision uint64) error {
+	return c.WritePacketsAtRevision([][]byte{packet}, revision)
+}
+
+// WritePacketsAtRevision writes packets only while revision still identifies
+// the active data plane.
+func (c *Client) WritePacketsAtRevision(packets [][]byte, revision uint64) error {
 	if err := c.ensureDTLSTransport(c.authCtx); err != nil {
 		return err
 	}
-	return c.core.WriteDataPacketAtRevision(packet, revision)
+	return c.core.WriteDataPacketsAtRevision(packets, revision)
 }
 
 func (c *Client) ActiveTransport() string {

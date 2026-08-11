@@ -13,7 +13,9 @@ require (
 
 replace github.com/metacubex/mihomo => ../
 
-replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-openconnect v0.0.0-20260811032552-3a936ab0f825
+replace github.com/pion/dtls/v3 => github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811061928-ccfbf1bfdfbf
+
+replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-openconnect v0.0.0-20260811062304-0c2d3da96344
 
 require (
 	github.com/Microsoft/go-winio v0.6.0 // indirect
@@ -130,7 +132,7 @@ require (
 	github.com/safchain/ethtool v0.3.0 // indirect
 	github.com/sagernet/netlink v0.0.0-20240612041022-b9a21c07ac6a // indirect
 	github.com/sagernet/sing v0.8.12-0.20260702081104-2ded2af32d3d // indirect
-	github.com/sagernet/sing-openconnect v0.0.0-20260811032552-3a936ab0f825 // indirect
+	github.com/sagernet/sing-openconnect v0.0.0-20260811062304-0c2d3da96344 // indirect
 	github.com/samber/lo v1.53.0 // indirect
 	github.com/sina-ghaderi/poly1305 v0.0.0-20220724002748-c5926b03988b // indirect
 	github.com/sina-ghaderi/rabaead v0.0.0-20220730151906-ab6e06b96e8c // indirect
