@@ -54,7 +54,7 @@ require (
 	github.com/pion/dtls/v3 v3.1.5
 	github.com/rasky/go-lzo v0.0.0-20200203143853-96a758eda86e
 	github.com/sagernet/sing v0.8.12-0.20260702081104-2ded2af32d3d
-	github.com/sagernet/sing-openconnect v0.0.0-20260811032552-3a936ab0f825
+	github.com/sagernet/sing-openconnect v0.0.0-20260811062304-0c2d3da96344
 	github.com/samber/lo v1.53.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/stretchr/testify v1.11.1
@@ -162,4 +162,6 @@ require (
 // for https://github.com/golang/protobuf/issues/1704
 replace google.golang.org/protobuf => github.com/metacubex/protobuf-go v0.0.0-20260306035419-7ceee0674686
 
-replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-openconnect v0.0.0-20260811032552-3a936ab0f825
+replace github.com/pion/dtls/v3 => github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811061928-ccfbf1bfdfbf
+
+replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-openconnect v0.0.0-20260811062304-0c2d3da96344

@@ -1,5 +1,7 @@
-github.com/Demogorgon314/sing-openconnect v0.0.0-20260811032552-3a936ab0f825 h1:SR/K13U/1QxCH1aKcU0dMrT03qvg0ciQy6P6z0Uk6pw=
-github.com/Demogorgon314/sing-openconnect v0.0.0-20260811032552-3a936ab0f825/go.mod h1:4AKZLVcvY3r54UaK2Gbnm7aN8pOwdLz+y4EP0QFZ5Eg=
+github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811061928-ccfbf1bfdfbf h1:HBeFj2C3bOzI6BD2OUNtNb++tPWQl1oQtb8IMFVGqyY=
+github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811061928-ccfbf1bfdfbf/go.mod h1:gz1K4jg6c+fq86oQMH4pilpCEOEPwmEr2jY+VcF/mkU=
+github.com/Demogorgon314/sing-openconnect v0.0.0-20260811062304-0c2d3da96344 h1:EfPy0iC7jxQh2FwNvWbdHSbiC8IBeXHehAGgRCaKQJ0=
+github.com/Demogorgon314/sing-openconnect v0.0.0-20260811062304-0c2d3da96344/go.mod h1:57IevupZOMI5TpzulwmBr0u0p+Jrx0UkImi8Au1JtXI=
 github.com/RyuaNerin/go-krypto v1.3.0 h1:smavTzSMAx8iuVlGb4pEwl9MD2qicqMzuXR2QWp2/Pg=
 github.com/RyuaNerin/go-krypto v1.3.0/go.mod h1:9R9TU936laAIqAmjcHo/LsaXYOZlymudOAxjaBf62UM=
 github.com/RyuaNerin/testingutil v0.1.0 h1:IYT6JL57RV3U2ml3dLHZsVtPOP6yNK7WUVdzzlpNrss=
@@ -223,8 +225,6 @@ github.com/oschwald/maxminddb-golang v1.12.0/go.mod h1:q0Nob5lTCqyQ8WT6FYgS1L7PX
 github.com/pierrec/lz4/v4 v4.1.14/go.mod h1:gZWDp/Ze/IJXGXf23ltt2EXimqmTUXEy0GFuRQyBid4=
 github.com/pierrec/lz4/v4 v4.1.27 h1:+PhzhWDrjRj89TH2sw43nE3+4+W8lSxIuQadEHZyjUk=
 github.com/pierrec/lz4/v4 v4.1.27/go.mod h1:EoQMVJgeeEOMsCqCzqFm2O0cJvljX2nGZjcRIPL34O4=
-github.com/pion/dtls/v3 v3.1.5 h1:9xJtVsHwMYeSjPp5Hh1FTis4DchnQWtnOa5o+6ygqfc=
-github.com/pion/dtls/v3 v3.1.5/go.mod h1:gz1K4jg6c+fq86oQMH4pilpCEOEPwmEr2jY+VcF/mkU=
 github.com/pion/logging v0.2.4 h1:tTew+7cmQ+Mc1pTBLKH2puKsOvhm32dROumOZ655zB8=
 github.com/pion/logging v0.2.4/go.mod h1:DffhXTKYdNZU+KtJ5pyQDjvOAh/GsNSyv1lbkFbe3so=
 github.com/pion/transport/v4 v4.0.2 h1:ifYlPqNwsy6aKQ9y8yzxXlHae5431ZrH2avkD/Rn6Tk=
