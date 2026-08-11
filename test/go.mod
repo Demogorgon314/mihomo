@@ -15,7 +15,7 @@ replace github.com/metacubex/mihomo => ../
 
 replace github.com/pion/dtls/v3 => github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811162613-ffa317d4c975
 
-replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-openconnect v0.0.0-20260811171630-7367b1d2bded
+replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-openconnect v0.0.0-20260811203243-c077f3a31ac6
 
 require (
 	github.com/Microsoft/go-winio v0.6.0 // indirect
