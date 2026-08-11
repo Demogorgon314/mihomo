@@ -305,7 +305,7 @@ func (g *Gateway) acceptLoop() {
 			defer connection.Close()
 			handleErr := g.handleConnection(connection)
 			expectedClose := g.consumeDroppedCSTPConnection(connection)
-			if handleErr != nil && !expectedClose {
+			if handleErr != nil && !expectedClose && !errors.Is(handleErr, net.ErrClosed) {
 				g.addError(handleErr)
 			}
 		}()
