@@ -19,7 +19,7 @@ Phases:
   p3   mihomo steady-state data-plane revision/readiness gate
   p4   sing-openconnect packet copy and protocol headroom allocation
   p5   sing-openconnect empty/full queue notification path
-  e2e  local fake gateway + DTLS + sing-openconnect + mihomo packet stack
+  e2e  local fake gateway + DTLS + sing-openconnect + mihomo UDP/TCP packet stack
   docker-e2e  Docker ocserv + DTLS + mihomo TCP data plane
 
 Every benchmark contains a correctness oracle. A missing, duplicate, corrupted,
@@ -116,7 +116,7 @@ run_phase() {
 			run_benchmark P5 "$sing_dir" "$sing_mod" '^BenchmarkAnyConnectP5QueueWakeup$' '' "$@"
 			;;
 		e2e)
-			run_benchmark E2E "$repo_dir/adapter/outbound" "$mihomo_mod" '^BenchmarkAnyConnectDataPlaneE2E$' with_gvisor "$@"
+			run_benchmark E2E "$repo_dir/adapter/outbound" "$mihomo_mod" '^BenchmarkAnyConnect(DataPlane|TCPDownload)E2E$' with_gvisor "$@"
 			;;
 		docker-e2e)
 			run_benchmark Docker-E2E "$repo_dir/internal/testutil/anyconnect" "$mihomo_mod" '^BenchmarkOCServAnyConnectDataPlaneE2E$' 'with_gvisor anyconnect_ocserv' "$@"
