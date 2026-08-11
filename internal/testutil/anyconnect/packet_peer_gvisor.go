@@ -245,7 +245,7 @@ func (p *IPv4TCPUDPEchoPeer) DNSQueries() int64 {
 }
 
 func (p *IPv4TCPUDPEchoPeer) HandlePacket(packet []byte) ([]byte, error) {
-	replies, err := p.HandlePackets(packet)
+	replies, err := p.handlePackets(packet, false)
 	if err != nil || len(replies) == 0 {
 		return nil, err
 	}
@@ -253,6 +253,10 @@ func (p *IPv4TCPUDPEchoPeer) HandlePacket(packet []byte) ([]byte, error) {
 }
 
 func (p *IPv4TCPUDPEchoPeer) HandlePackets(packet []byte) ([][]byte, error) {
+	return p.handlePackets(packet, true)
+}
+
+func (p *IPv4TCPUDPEchoPeer) handlePackets(packet []byte, collectAdditional bool) ([][]byte, error) {
 	if p == nil || p.endpoint == nil {
 		return nil, errors.New("TCP/UDP echo peer is closed")
 	}
@@ -276,6 +280,9 @@ func (p *IPv4TCPUDPEchoPeer) HandlePackets(packet []byte) ([][]byte, error) {
 	}
 	replies := [][]byte{packetBytes(first)}
 	first.DecRef()
+	if !collectAdditional {
+		return replies, nil
+	}
 	quiet := time.NewTimer(2 * time.Millisecond)
 	defer quiet.Stop()
 	for {
