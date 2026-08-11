@@ -180,11 +180,11 @@ func (c *outboundBatchTestClient) WritePacketsAtRevision(packets [][]byte, _ uin
 func (*outboundBatchTestClient) ActiveTransport() string { return "dtls" }
 func (*outboundBatchTestClient) Close() error            { return nil }
 
-func TestAnyConnectStackPacketsBatchWithoutTimer(t *testing.T) {
+func TestAnyConnectStackPacketsWriteIndividually(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	device := &outboundBatchTestDevice{packets: make(chan []byte, 3)}
-	client := &outboundBatchTestClient{batches: make(chan []byte, 1)}
+	client := &outboundBatchTestClient{batches: make(chan []byte, 3)}
 	generation := &anyConnectGeneration{
 		device:          device,
 		revision:        1,
@@ -204,26 +204,20 @@ func TestAnyConnectStackPacketsBatchWithoutTimer(t *testing.T) {
 	}
 	session.wait.Add(2)
 	go session.readStackPackets(generation)
+	go session.writeStackPackets(generation)
 
 	device.packets <- []byte{1}
 	device.packets <- []byte{2}
 	device.packets <- []byte{3}
-	for len(generation.outboundPackets) < 3 {
+	for expected := byte(1); expected <= 3; expected++ {
 		select {
+		case values := <-client.batches:
+			if !slices.Equal(values, []byte{expected}) {
+				t.Fatalf("unexpected write: %v", values)
+			}
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
-		default:
-			runtime.Gosched()
 		}
-	}
-	go session.writeStackPackets(generation)
-	select {
-	case values := <-client.batches:
-		if !slices.Equal(values, []byte{1, 2, 3}) {
-			t.Fatalf("unexpected batch: %v", values)
-		}
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
 	}
 
 	session.access.Lock()
