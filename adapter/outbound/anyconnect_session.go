@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -342,6 +343,7 @@ func (s *anyConnectSession) writeStackPackets(generation *anyConnectGeneration) 
 			return
 		}
 		packets := [][]byte{packet}
+		runtime.Gosched()
 		for len(packets) < cap(generation.outboundPackets) {
 			select {
 			case packet, loaded = <-generation.outboundPackets:
