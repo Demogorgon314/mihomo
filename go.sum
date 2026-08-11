@@ -1,7 +1,7 @@
 github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811162613-ffa317d4c975 h1:zrm/PPr5XnW96CfgfrXw+YN5EWUz7seeLUw9Tx4rdJw=
 github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811162613-ffa317d4c975/go.mod h1:gz1K4jg6c+fq86oQMH4pilpCEOEPwmEr2jY+VcF/mkU=
-github.com/Demogorgon314/sing-openconnect v0.0.0-20260811171630-7367b1d2bded h1:JHhRGRGdnzXJyLo8+Oiew4risknaEryi3RPc4FVkKgc=
-github.com/Demogorgon314/sing-openconnect v0.0.0-20260811171630-7367b1d2bded/go.mod h1:v6/TQ+/Ojtkjv9Yy1b6caDVNK3W1ntFqo0uY3N5ttS0=
+github.com/Demogorgon314/sing-openconnect v0.0.0-20260811203243-c077f3a31ac6 h1:istcEvpltRUgJY3cyxCX71EXqS/jpqIg6p+H2MwqCsk=
+github.com/Demogorgon314/sing-openconnect v0.0.0-20260811203243-c077f3a31ac6/go.mod h1:v6/TQ+/Ojtkjv9Yy1b6caDVNK3W1ntFqo0uY3N5ttS0=
 github.com/RyuaNerin/go-krypto v1.3.0 h1:smavTzSMAx8iuVlGb4pEwl9MD2qicqMzuXR2QWp2/Pg=
 github.com/RyuaNerin/go-krypto v1.3.0/go.mod h1:9R9TU936laAIqAmjcHo/LsaXYOZlymudOAxjaBf62UM=
 github.com/RyuaNerin/testingutil v0.1.0 h1:IYT6JL57RV3U2ml3dLHZsVtPOP6yNK7WUVdzzlpNrss=
