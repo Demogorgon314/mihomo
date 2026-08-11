@@ -3,12 +3,15 @@
 package outbound
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -120,6 +123,220 @@ func BenchmarkAnyConnectDataPlaneE2E(b *testing.B) {
 	}
 }
 
+// BenchmarkAnyConnectTCPDownloadE2E isolates the high-throughput receive path
+// and the pure TCP acknowledgement traffic sent back through DTLS.
+func BenchmarkAnyConnectTCPDownloadE2E(b *testing.B) {
+	const (
+		segmentSize      = 1024
+		segmentsPerBlock = 32
+		blockSize        = segmentSize * segmentsPerBlock
+	)
+	block := make([]byte, blockSize)
+	for index := range block {
+		block[index] = byte(index*31 + 17)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	b.Cleanup(cancel)
+	peerAddress := netip.MustParseAddr("192.0.2.1")
+	peer := newAnyConnectTCPDownloadPeer(peerAddress, testAnyConnectTCPPort, segmentSize, segmentsPerBlock, block)
+	outbound, session, recorder := startAnyConnectE2EBenchmarkTunnel(b, ctx, peer)
+	waitAnyConnectTransport(b, ctx, session, "dtls")
+	revision, err := session.client.WaitDataPlaneReady(ctx)
+	if err != nil {
+		b.Fatal(err)
+	}
+	connection, err := outbound.DialContext(ctx, &C.Metadata{
+		NetWork: C.TCP,
+		DstIP:   peerAddress,
+		DstPort: testAnyConnectTCPPort,
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = connection.Close() })
+	if deadline, loaded := ctx.Deadline(); loaded {
+		if err = connection.SetDeadline(deadline); err != nil {
+			b.Fatal(err)
+		}
+	}
+	received := make([]byte, blockSize)
+	baselineDTLS := recorder.Count("dtls-data")
+	baselineCSTP := recorder.Count("cstp-data")
+
+	b.ReportAllocs()
+	b.SetBytes(blockSize)
+	b.ResetTimer()
+	for index := 0; index < b.N; index++ {
+		if _, err = io.ReadFull(connection, received); err != nil {
+			b.Fatalf("read block %d: %v", index, err)
+		}
+		if !bytes.Equal(received, block) {
+			b.Fatalf("download block %d was corrupted", index)
+		}
+	}
+	b.StopTimer()
+
+	if currentRevision, readyErr := session.client.WaitDataPlaneReady(ctx); readyErr != nil || currentRevision != revision {
+		b.Fatalf("data-plane revision changed: got %d, want %d, err=%v", currentRevision, revision, readyErr)
+	}
+	if transport := session.client.ActiveTransport(); transport != "dtls" {
+		b.Fatalf("benchmark left DTLS transport: %q", transport)
+	}
+	if actual := recorder.Count("dtls-data"); actual <= baselineDTLS {
+		b.Fatalf("gateway received no DTLS acknowledgements: before=%d after=%d", baselineDTLS, actual)
+	}
+	if actual := recorder.Count("cstp-data"); actual != baselineCSTP {
+		b.Fatalf("benchmark leaked data over CSTP: before=%d after=%d", baselineCSTP, actual)
+	}
+}
+
+type anyConnectTCPDownloadPeer struct {
+	access           sync.Mutex
+	address          netip.Addr
+	port             uint16
+	segmentSize      int
+	segmentsPerBlock int
+	block            []byte
+	clientAddress    [4]byte
+	clientPort       uint16
+	clientNext       uint32
+	serverInitial    uint32
+	serverNext       uint32
+	established      bool
+}
+
+func newAnyConnectTCPDownloadPeer(address netip.Addr, port uint16, segmentSize int, segmentsPerBlock int, block []byte) *anyConnectTCPDownloadPeer {
+	return &anyConnectTCPDownloadPeer{
+		address:          address,
+		port:             port,
+		segmentSize:      segmentSize,
+		segmentsPerBlock: segmentsPerBlock,
+		block:            append([]byte(nil), block...),
+		serverInitial:    0x10203040,
+	}
+}
+
+func (p *anyConnectTCPDownloadPeer) HandlePacket(packet []byte) ([]byte, error) {
+	replies, err := p.HandlePackets(packet)
+	if err != nil || len(replies) == 0 {
+		return nil, err
+	}
+	return replies[0], nil
+}
+
+func (p *anyConnectTCPDownloadPeer) HandlePackets(packet []byte) ([][]byte, error) {
+	if len(packet) < 40 || packet[0]>>4 != 4 || packet[9] != 6 {
+		return nil, fmt.Errorf("download peer received a non-TCP IPv4 packet")
+	}
+	ipHeaderLength := int(packet[0]&0x0f) * 4
+	if ipHeaderLength < 20 || ipHeaderLength+20 > len(packet) || int(binary.BigEndian.Uint16(packet[2:4])) != len(packet) {
+		return nil, fmt.Errorf("download peer received an invalid IPv4 packet")
+	}
+	destination := [4]byte{packet[16], packet[17], packet[18], packet[19]}
+	if netip.AddrFrom4(destination) != p.address {
+		return nil, fmt.Errorf("download peer received a packet for %s", netip.AddrFrom4(destination))
+	}
+	tcpPacket := packet[ipHeaderLength:]
+	tcpHeaderLength := int(tcpPacket[12]>>4) * 4
+	if tcpHeaderLength < 20 || tcpHeaderLength > len(tcpPacket) || binary.BigEndian.Uint16(tcpPacket[2:4]) != p.port {
+		return nil, fmt.Errorf("download peer received an invalid TCP packet")
+	}
+	flags := tcpPacket[13]
+	clientSequence := binary.BigEndian.Uint32(tcpPacket[4:8])
+	clientAcknowledgement := binary.BigEndian.Uint32(tcpPacket[8:12])
+	clientPort := binary.BigEndian.Uint16(tcpPacket[0:2])
+	clientAddress := [4]byte{packet[12], packet[13], packet[14], packet[15]}
+	clientPayloadLength := len(tcpPacket) - tcpHeaderLength
+
+	p.access.Lock()
+	defer p.access.Unlock()
+	if flags&0x02 != 0 {
+		p.clientAddress = clientAddress
+		p.clientPort = clientPort
+		p.clientNext = clientSequence + 1
+		p.serverNext = p.serverInitial + 1
+		p.established = true
+		return [][]byte{p.buildPacket(p.serverInitial, p.clientNext, 0x12, nil)}, nil
+	}
+	if !p.established || clientAddress != p.clientAddress || clientPort != p.clientPort {
+		return nil, fmt.Errorf("download peer received a packet for an unknown TCP flow")
+	}
+	if clientPayloadLength > 0 {
+		p.clientNext = clientSequence + uint32(clientPayloadLength)
+	}
+	if flags&(0x01|0x04) != 0 {
+		if flags&0x01 != 0 {
+			p.clientNext++
+			return [][]byte{p.buildPacket(p.serverNext, p.clientNext, 0x10, nil)}, nil
+		}
+		return nil, nil
+	}
+	if flags&0x10 == 0 || clientAcknowledgement < p.serverNext {
+		return nil, nil
+	}
+	if clientAcknowledgement != p.serverNext {
+		return nil, fmt.Errorf("download peer received ACK %d beyond sequence %d", clientAcknowledgement, p.serverNext)
+	}
+	replies := make([][]byte, p.segmentsPerBlock)
+	sequence := p.serverNext
+	for index := range replies {
+		start := index * p.segmentSize
+		end := start + p.segmentSize
+		replies[index] = p.buildPacket(sequence, p.clientNext, 0x18, p.block[start:end])
+		sequence += uint32(p.segmentSize)
+	}
+	p.serverNext = sequence
+	return replies, nil
+}
+
+func (p *anyConnectTCPDownloadPeer) buildPacket(sequence uint32, acknowledgement uint32, flags byte, payload []byte) []byte {
+	packet := make([]byte, 40+len(payload))
+	packet[0] = 0x45
+	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
+	packet[8] = 64
+	packet[9] = 6
+	serverAddress := p.address.As4()
+	copy(packet[12:16], serverAddress[:])
+	copy(packet[16:20], p.clientAddress[:])
+	binary.BigEndian.PutUint16(packet[10:12], anyConnectBenchmarkChecksum(packet[:20]))
+	tcpPacket := packet[20:]
+	binary.BigEndian.PutUint16(tcpPacket[0:2], p.port)
+	binary.BigEndian.PutUint16(tcpPacket[2:4], p.clientPort)
+	binary.BigEndian.PutUint32(tcpPacket[4:8], sequence)
+	binary.BigEndian.PutUint32(tcpPacket[8:12], acknowledgement)
+	tcpPacket[12] = 0x50
+	tcpPacket[13] = flags
+	binary.BigEndian.PutUint16(tcpPacket[14:16], 65535)
+	copy(tcpPacket[20:], payload)
+	binary.BigEndian.PutUint16(tcpPacket[16:18], anyConnectBenchmarkTCPChecksum(packet[12:16], packet[16:20], tcpPacket))
+	return packet
+}
+
+func anyConnectBenchmarkTCPChecksum(source []byte, destination []byte, tcpPacket []byte) uint16 {
+	pseudoHeader := make([]byte, 12+len(tcpPacket))
+	copy(pseudoHeader[0:4], source)
+	copy(pseudoHeader[4:8], destination)
+	pseudoHeader[9] = 6
+	binary.BigEndian.PutUint16(pseudoHeader[10:12], uint16(len(tcpPacket)))
+	copy(pseudoHeader[12:], tcpPacket)
+	return anyConnectBenchmarkChecksum(pseudoHeader)
+}
+
+func anyConnectBenchmarkChecksum(content []byte) uint16 {
+	var sum uint32
+	for len(content) >= 2 {
+		sum += uint32(binary.BigEndian.Uint16(content[:2]))
+		content = content[2:]
+	}
+	if len(content) == 1 {
+		sum += uint32(content[0]) << 8
+	}
+	for sum>>16 != 0 {
+		sum = sum&0xffff + sum>>16
+	}
+	return ^uint16(sum)
+}
+
 func waitAnyConnectBenchmarkRecordCount(ctx context.Context, recorder *testanyconnect.Recorder, kind string, expected uint64) uint64 {
 	timer := time.NewTimer(time.Second)
 	defer timer.Stop()
@@ -151,30 +368,36 @@ func startAnyConnectE2EBenchmark(b *testing.B) (context.Context, *AnyConnect, *a
 	b.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	b.Cleanup(cancel)
-	scenario := testanyconnect.BasicCSTPScenario()
-	scenario.ModernDTLS = true
 	peerAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = peer.Close() })
+	outbound, session, recorder := startAnyConnectE2EBenchmarkTunnel(b, ctx, anyConnectSingleReplyPeer{peer: peer})
+	return ctx, outbound, session, recorder, peerAddress
+}
+
+func startAnyConnectE2EBenchmarkTunnel(b *testing.B, ctx context.Context, peer testanyconnect.PacketPeer) (*AnyConnect, *anyConnectSession, *testanyconnect.Recorder) {
+	b.Helper()
+	scenario := testanyconnect.BasicCSTPScenario()
+	scenario.ModernDTLS = true
 	recorder := testanyconnect.NewCountingRecorder()
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, anyConnectSingleReplyPeer{peer: peer}, recorder)
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = gateway.Close() })
 	outbound := newFakeAnyConnectOutboundWithOption(b, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
 		option.DTLSMode = ac.DTLSModeRequire
-		option.DPDInterval = 2
+		option.DPDInterval = 30
 	})
 	b.Cleanup(func() { _ = outbound.Close() })
 	session, err := outbound.run(ctx)
 	if err != nil {
 		b.Fatal(err)
 	}
-	return ctx, outbound, session, recorder, peerAddress
+	return outbound, session, recorder
 }
 
 func newAnyConnectE2EBenchmarkPacket(size int) []byte {
