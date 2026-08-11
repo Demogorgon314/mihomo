@@ -2,7 +2,9 @@
 
 The local suite separates five optimization targets and a final end-to-end
 gate. It uses the sibling `sing-openconnect` and `dtls` checkouts through a
-temporary Go workspace; it never contacts a real VPN server.
+temporary root-module override; it never edits those modules or contacts a
+real VPN server. The override is important because dependency-module
+`replace` directives are otherwise ignored by Go.
 
 ```sh
 # Quick check of one optimization target.
