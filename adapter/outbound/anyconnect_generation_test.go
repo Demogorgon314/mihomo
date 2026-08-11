@@ -7,7 +7,9 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"os"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,9 +36,12 @@ func (generationTestClient) ReadPacketWithRevision(ctx context.Context) ([]byte,
 }
 
 func (generationTestClient) WritePacketAtRevision([]byte, uint64) error { return nil }
-func (generationTestClient) WritePacket([]byte) error                   { return nil }
-func (generationTestClient) ActiveTransport() string                    { return "cstp" }
-func (generationTestClient) Close() error                               { return nil }
+func (generationTestClient) WritePacketsAtRevision([][]byte, uint64) error {
+	return nil
+}
+func (generationTestClient) WritePacket([]byte) error { return nil }
+func (generationTestClient) ActiveTransport() string  { return "cstp" }
+func (generationTestClient) Close() error             { return nil }
 
 type packetSequenceTestClient struct {
 	packets  chan []byte
@@ -71,6 +76,118 @@ type blockingGenerationTestDevice struct {
 	closed       chan struct{}
 	closedFlag   atomic.Bool
 	closeOnce    sync.Once
+}
+
+type outboundBatchTestDevice struct {
+	wireguard.Device
+	packets   chan []byte
+	closeOnce sync.Once
+}
+
+func (d *outboundBatchTestDevice) Read(buffers [][]byte, sizes []int, _ int) (int, error) {
+	packet, loaded := <-d.packets
+	if !loaded {
+		return 0, os.ErrClosed
+	}
+	sizes[0] = copy(buffers[0], packet)
+	return 1, nil
+}
+
+func (d *outboundBatchTestDevice) Close() error {
+	d.closeOnce.Do(func() {
+		close(d.packets)
+	})
+	return nil
+}
+
+type outboundBatchTestClient struct {
+	batches chan []byte
+}
+
+func (*outboundBatchTestClient) WaitReady(context.Context) (ac.NetworkConfig, error) {
+	return ac.NetworkConfig{}, nil
+}
+
+func (*outboundBatchTestClient) WaitDataPlaneReady(context.Context) (uint64, error) {
+	return 1, nil
+}
+
+func (*outboundBatchTestClient) ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, error) {
+	<-ctx.Done()
+	return nil, 0, ctx.Err()
+}
+
+func (*outboundBatchTestClient) WritePacket([]byte) error { return nil }
+func (*outboundBatchTestClient) WritePacketAtRevision([]byte, uint64) error {
+	return nil
+}
+
+func (c *outboundBatchTestClient) WritePacketsAtRevision(packets [][]byte, _ uint64) error {
+	values := make([]byte, len(packets))
+	for index, packet := range packets {
+		values[index] = packet[0]
+	}
+	c.batches <- values
+	return nil
+}
+
+func (*outboundBatchTestClient) ActiveTransport() string { return "dtls" }
+func (*outboundBatchTestClient) Close() error            { return nil }
+
+func TestAnyConnectStackPacketsBatchWithoutTimer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	device := &outboundBatchTestDevice{packets: make(chan []byte, 3)}
+	client := &outboundBatchTestClient{batches: make(chan []byte, 1)}
+	generation := &anyConnectGeneration{
+		device:          device,
+		revision:        1,
+		outboundPackets: make(chan []byte, anyConnectOutboundPacketBatchSize),
+	}
+	generation.packetPool.New = func() any {
+		return make([]byte, 1400)
+	}
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	session := &anyConnectSession{
+		client:      client,
+		ctx:         sessionCtx,
+		cancel:      sessionCancel,
+		generation:  generation,
+		name:        "batch-test",
+		initialDone: make(chan struct{}),
+	}
+	session.wait.Add(2)
+	go session.readStackPackets(generation)
+
+	device.packets <- []byte{1}
+	device.packets <- []byte{2}
+	device.packets <- []byte{3}
+	for len(generation.outboundPackets) < 3 {
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		default:
+			runtime.Gosched()
+		}
+	}
+	go session.writeStackPackets(generation)
+	select {
+	case values := <-client.batches:
+		if !slices.Equal(values, []byte{1, 2, 3}) {
+			t.Fatalf("unexpected batch: %v", values)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	session.access.Lock()
+	session.generation = nil
+	session.access.Unlock()
+	if err := generation.close(); err != nil {
+		t.Fatal(err)
+	}
+	sessionCancel()
+	session.wait.Wait()
 }
 
 func (d *blockingGenerationTestDevice) Write([][]byte, int) (int, error) {
@@ -196,9 +313,12 @@ func TestAnyConnectGenerationReplacementClosesBlockedWriter(t *testing.T) {
 }
 
 func (*packetSequenceTestClient) WritePacketAtRevision([]byte, uint64) error { return nil }
-func (*packetSequenceTestClient) WritePacket([]byte) error                   { return nil }
-func (*packetSequenceTestClient) ActiveTransport() string                    { return "dtls" }
-func (*packetSequenceTestClient) Close() error                               { return nil }
+func (*packetSequenceTestClient) WritePacketsAtRevision([][]byte, uint64) error {
+	return nil
+}
+func (*packetSequenceTestClient) WritePacket([]byte) error { return nil }
+func (*packetSequenceTestClient) ActiveTransport() string  { return "dtls" }
+func (*packetSequenceTestClient) Close() error             { return nil }
 
 func TestAnyConnectNetworkGenerationReplacement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

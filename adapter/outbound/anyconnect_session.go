@@ -19,11 +19,15 @@ import (
 	wireguard "github.com/metacubex/sing-wireguard"
 )
 
+const anyConnectOutboundPacketBatchSize = 64
+
 type anyConnectGeneration struct {
 	device          wireguard.Device
 	resolver        resolver.Resolver
 	revision        uint64
 	configuration   ac.NetworkConfig
+	outboundPackets chan []byte
+	packetPool      sync.Pool
 	dataPlaneAccess sync.RWMutex
 	closed          atomic.Bool
 }
@@ -80,6 +84,7 @@ type acClient interface {
 	ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, error)
 	WritePacket(packet []byte) error
 	WritePacketAtRevision(packet []byte, revision uint64) error
+	WritePacketsAtRevision(packets [][]byte, revision uint64) error
 	ActiveTransport() string
 	Close() error
 }
@@ -188,7 +193,17 @@ func (s *anyConnectSession) applyNetworkConfig(event ac.NetworkConfigEvent) erro
 		s.signalInitial(err)
 		return err
 	}
-	generation := &anyConnectGeneration{device: device, resolver: remoteResolver, revision: event.Revision, configuration: configuration}
+	generation := &anyConnectGeneration{
+		device:          device,
+		resolver:        remoteResolver,
+		revision:        event.Revision,
+		configuration:   configuration,
+		outboundPackets: make(chan []byte, anyConnectOutboundPacketBatchSize),
+	}
+	packetSize := int(configuration.MTU)
+	generation.packetPool.New = func() any {
+		return make([]byte, packetSize)
+	}
 
 	s.access.Lock()
 	if s.stopped || s.ctx.Err() != nil {
@@ -199,9 +214,10 @@ func (s *anyConnectSession) applyNetworkConfig(event ac.NetworkConfigEvent) erro
 	previous := s.generation
 	s.generation = generation
 	s.configuration = configuration
-	s.wait.Add(1)
+	s.wait.Add(2)
 	s.access.Unlock()
-	go s.stackToTunnel(generation)
+	go s.readStackPackets(generation)
+	go s.writeStackPackets(generation)
 	if previous != nil {
 		_ = previous.close()
 	}
@@ -271,12 +287,21 @@ func (s *anyConnectSession) configurationSnapshot() ac.NetworkConfig {
 	return s.configuration
 }
 
-func (s *anyConnectSession) stackToTunnel(generation *anyConnectGeneration) {
+func (s *anyConnectSession) readStackPackets(generation *anyConnectGeneration) {
 	defer s.wait.Done()
-	buffer := make([]byte, 64*1024)
-	buffers := [][]byte{buffer}
+	defer close(generation.outboundPackets)
+	var packet []byte
+	defer func() {
+		if packet != nil {
+			generation.packetPool.Put(packet)
+		}
+	}()
+	buffers := make([][]byte, 1)
 	sizes := []int{0}
 	for s.ctx.Err() == nil {
+		packet = generation.packetPool.Get().([]byte)
+		buffers[0] = packet
+		sizes[0] = 0
 		_, err := generation.device.Read(buffers, sizes, 0)
 		if err != nil {
 			if !s.isCurrent(generation) {
@@ -289,9 +314,50 @@ func (s *anyConnectSession) stackToTunnel(generation *anyConnectGeneration) {
 			return
 		}
 		if sizes[0] == 0 {
+			generation.packetPool.Put(packet)
+			packet = nil
 			continue
 		}
-		current, err := s.writePacket(generation, buffer[:sizes[0]])
+		packet = packet[:sizes[0]]
+		select {
+		case generation.outboundPackets <- packet:
+			packet = nil
+		case <-s.ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *anyConnectSession) writeStackPackets(generation *anyConnectGeneration) {
+	defer s.wait.Done()
+	defer func() {
+		for packet := range generation.outboundPackets {
+			packet = packet[:cap(packet)]
+			generation.packetPool.Put(packet)
+		}
+	}()
+	for {
+		packet, loaded := <-generation.outboundPackets
+		if !loaded {
+			return
+		}
+		packets := [][]byte{packet}
+		for len(packets) < cap(generation.outboundPackets) {
+			select {
+			case packet, loaded = <-generation.outboundPackets:
+				if loaded {
+					packets = append(packets, packet)
+					continue
+				}
+			default:
+			}
+			break
+		}
+		current, err := s.writePackets(generation, packets)
+		for _, packet = range packets {
+			packet = packet[:cap(packet)]
+			generation.packetPool.Put(packet)
+		}
 		if !current {
 			return
 		}
@@ -305,7 +371,7 @@ func (s *anyConnectSession) stackToTunnel(generation *anyConnectGeneration) {
 	}
 }
 
-func (s *anyConnectSession) writePacket(generation *anyConnectGeneration, packet []byte) (bool, error) {
+func (s *anyConnectSession) writePackets(generation *anyConnectGeneration, packets [][]byte) (bool, error) {
 	for {
 		revision, err := s.client.WaitDataPlaneReady(s.ctx)
 		if err != nil {
@@ -321,7 +387,7 @@ func (s *anyConnectSession) writePacket(generation *anyConnectGeneration, packet
 			continue
 		}
 		s.access.RUnlock()
-		err = s.client.WritePacketAtRevision(packet, revision)
+		err = s.client.WritePacketsAtRevision(packets, revision)
 		if !errors.Is(err, ac.ErrDataChannelNotReady) {
 			return true, err
 		}
