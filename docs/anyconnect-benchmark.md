@@ -8,7 +8,7 @@ real VPN server. The override is important because dependency-module
 
 ```sh
 # Quick check of one optimization target.
-test/benchmark_anyconnect.sh p2
+test/benchmark_anyconnect.sh p2-record
 
 # Stable before/after samples for benchstat.
 ANYCONNECT_BENCH_TIME=3s ANYCONNECT_BENCH_COUNT=10 \
@@ -20,18 +20,28 @@ go run golang.org/x/perf/cmd/benchstat@latest \
 
 # Run every microbenchmark and the local end-to-end gate.
 test/benchmark_anyconnect.sh all
+
+# Run the real ocserv end-to-end benchmark in Docker.
+MIHOMO_ANYCONNECT_OCSERV=1 test/benchmark_anyconnect.sh docker-e2e
 ```
 
 The phases are:
 
 - `p1`: sing-openconnect payload copy, queue, completion, revision gate, and
   session write.
+- `p2-record`: the steady-state DTLS 1.2 application-record construction and
+  encryption path, without handshake, queue, socket, or peer scheduling. It
+  covers AES-256-GCM used by the Cisco injected-resumption deployment and
+  ChaCha20-Poly1305 used by standard PSK ocserv.
 - `p2`: Pion DTLS record protection and connected UDP I/O.
 - `p3`: mihomo's steady-state data-plane readiness/revision gate.
 - `p4`: sing-openconnect packet copy and protocol headroom allocation.
 - `p5`: sing-openconnect queue empty/full notification path.
 - `e2e`: local fake gateway, real modern DTLS, sing-openconnect, and mihomo's
   packet stack.
+- `docker-e2e`: pinned Docker ocserv, real modern DTLS, and a persistent TCP
+  echo stream through the complete mihomo packet stack. It is intentionally
+  separate from `all` because it requires Docker and `/dev/net/tun`.
 
 Each timed path validates packet length, sequence, complement canary, and full
 payload. Ordered stages reject reordering; the UDP end-to-end gate accepts safe
