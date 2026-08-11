@@ -4,7 +4,7 @@ set -eu
 
 usage() {
 	cat <<'EOF'
-Usage: test/benchmark_anyconnect.sh <p1|p2|p3|p4|p5|e2e|all> [go test flags]
+Usage: test/benchmark_anyconnect.sh <p1|p2-record|p2|p3|p4|p5|e2e|docker-e2e|all> [go test flags]
 
 Environment:
   ANYCONNECT_BENCH_TIME   Go benchmark duration (default: 1s)
@@ -14,11 +14,13 @@ Environment:
 
 Phases:
   p1   sing-openconnect copy/queue/completion/session-write pipeline
+  p2-record  Pion DTLS application-record construction and encryption only
   p2   Pion DTLS encryption plus connected UDP I/O
   p3   mihomo steady-state data-plane revision/readiness gate
   p4   sing-openconnect packet copy and protocol headroom allocation
   p5   sing-openconnect empty/full queue notification path
   e2e  local fake gateway + DTLS + sing-openconnect + mihomo packet stack
+  docker-e2e  Docker ocserv + DTLS + mihomo TCP data plane
 
 Every benchmark contains a correctness oracle. A missing, duplicate, corrupted,
 stale-revision, or CSTP-leaked packet fails the run. Ordered stages also reject
@@ -101,6 +103,9 @@ run_phase() {
 		p2)
 			run_benchmark P2 "$dtls_dir" '' '^BenchmarkAnyConnectP2DTLSUDP$' '' "$@"
 			;;
+		p2-record)
+			run_benchmark P2-record "$dtls_dir" '' '^BenchmarkAnyConnectRecordProtection$' '' "$@"
+			;;
 		p3)
 			run_benchmark P3 "$repo_dir/transport/anyconnect" "$mihomo_mod" '^BenchmarkAnyConnectP3DataPlaneReady$' '' "$@"
 			;;
@@ -112,6 +117,9 @@ run_phase() {
 			;;
 		e2e)
 			run_benchmark E2E "$repo_dir/adapter/outbound" "$mihomo_mod" '^BenchmarkAnyConnectDataPlaneE2E$' with_gvisor "$@"
+			;;
+		docker-e2e)
+			run_benchmark Docker-E2E "$repo_dir/internal/testutil/anyconnect" "$mihomo_mod" '^BenchmarkOCServAnyConnectDataPlaneE2E$' 'with_gvisor anyconnect_ocserv' "$@"
 			;;
 		*)
 			echo "unknown AnyConnect benchmark phase: $current_phase" >&2
