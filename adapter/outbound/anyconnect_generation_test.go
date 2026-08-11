@@ -7,12 +7,16 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"runtime"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/metacubex/mihomo/component/resolver"
 	ac "github.com/metacubex/mihomo/transport/anyconnect"
 
+	wireguard "github.com/metacubex/sing-wireguard"
 	M "github.com/metacubex/sing/common/metadata"
 )
 
@@ -22,39 +26,179 @@ func (generationTestClient) WaitReady(context.Context) (ac.NetworkConfig, error)
 	return ac.NetworkConfig{}, nil
 }
 
-func (generationTestClient) ReadPacket(ctx context.Context) ([]byte, error) {
+func (generationTestClient) WaitDataPlaneReady(context.Context) (uint64, error) { return 0, nil }
+
+func (generationTestClient) ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, error) {
 	<-ctx.Done()
-	return nil, ctx.Err()
+	return nil, 0, ctx.Err()
 }
 
-func (generationTestClient) WritePacket([]byte) error { return nil }
-func (generationTestClient) ActiveTransport() string  { return "cstp" }
-func (generationTestClient) Close() error             { return nil }
+func (generationTestClient) WritePacketAtRevision([]byte, uint64) error { return nil }
+func (generationTestClient) WritePacket([]byte) error                   { return nil }
+func (generationTestClient) ActiveTransport() string                    { return "cstp" }
+func (generationTestClient) Close() error                               { return nil }
 
 type packetSequenceTestClient struct {
-	packets chan []byte
-	err     error
+	packets  chan []byte
+	err      error
+	revision atomic.Uint64
 }
 
 func (c *packetSequenceTestClient) WaitReady(context.Context) (ac.NetworkConfig, error) {
 	return ac.NetworkConfig{}, nil
 }
 
-func (c *packetSequenceTestClient) ReadPacket(ctx context.Context) ([]byte, error) {
+func (*packetSequenceTestClient) WaitDataPlaneReady(context.Context) (uint64, error) {
+	return 0, nil
+}
+
+func (c *packetSequenceTestClient) ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, error) {
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, 0, ctx.Err()
 	case packet := <-c.packets:
 		if packet == nil {
-			return nil, c.err
+			return nil, 0, c.err
 		}
-		return packet, nil
+		return packet, c.revision.Load(), nil
 	}
 }
 
-func (*packetSequenceTestClient) WritePacket([]byte) error { return nil }
-func (*packetSequenceTestClient) ActiveTransport() string  { return "dtls" }
-func (*packetSequenceTestClient) Close() error             { return nil }
+type blockingGenerationTestDevice struct {
+	wireguard.Device
+	writeStarted chan struct{}
+	releaseWrite chan struct{}
+	closed       chan struct{}
+	closedFlag   atomic.Bool
+	closeOnce    sync.Once
+}
+
+func (d *blockingGenerationTestDevice) Write([][]byte, int) (int, error) {
+	d.writeStarted <- struct{}{}
+	select {
+	case <-d.releaseWrite:
+		if d.closedFlag.Load() {
+			return 0, net.ErrClosed
+		}
+		return 1, nil
+	case <-d.closed:
+		return 0, net.ErrClosed
+	}
+}
+
+func (d *blockingGenerationTestDevice) Close() error {
+	d.closeOnce.Do(func() {
+		d.closedFlag.Store(true)
+		close(d.closed)
+	})
+	return nil
+}
+
+func TestAnyConnectGenerationReplacementClosesBlockedWriter(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := &packetSequenceTestClient{packets: make(chan []byte, 1), err: net.ErrClosed}
+	client.revision.Store(1)
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	session := &anyConnectSession{
+		client:          client,
+		ctx:             sessionCtx,
+		cancel:          sessionCancel,
+		name:            "blocked-generation-test",
+		resolverFactory: func(ac.NetworkConfig) (resolver.Resolver, error) { return nil, nil },
+		initialDone:     make(chan struct{}),
+		done:            make(chan struct{}),
+	}
+	configuration := ac.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")}, MTU: 1400}
+	device := &blockingGenerationTestDevice{
+		writeStarted: make(chan struct{}, 1),
+		releaseWrite: make(chan struct{}, 1),
+		closed:       make(chan struct{}),
+	}
+	session.generation = &anyConnectGeneration{device: device, revision: 1, configuration: configuration}
+	session.configuration = configuration
+	session.signalInitial(nil)
+	session.wait.Add(1)
+	go session.runTunnelToStack()
+	go func() {
+		session.wait.Wait()
+		close(session.done)
+	}()
+	t.Cleanup(func() { _ = session.close() })
+
+	packet := make([]byte, 20)
+	packet[0] = 0x45
+	client.packets <- packet
+	select {
+	case <-device.writeStarted:
+	case <-ctx.Done():
+		t.Fatalf("stack writer did not block in the fake device: %v", ctx.Err())
+	}
+
+	metadataUpdate := configuration
+	metadataUpdate.DNS = []netip.Addr{netip.MustParseAddr("192.0.2.53")}
+	metadataUpdated := make(chan error, 1)
+	go func() {
+		metadataUpdated <- session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigReestablishment, Revision: 2, Config: metadataUpdate})
+	}()
+	updateDeadline := time.NewTimer(time.Second)
+	defer updateDeadline.Stop()
+	for session.generation.dataPlaneAccess.TryRLock() {
+		session.generation.dataPlaneAccess.RUnlock()
+		select {
+		case <-updateDeadline.C:
+			t.Fatal("metadata revision update did not queue behind the active device write")
+		default:
+			runtime.Gosched()
+		}
+	}
+	select {
+	case err := <-metadataUpdated:
+		t.Fatalf("metadata revision update crossed the blocked device write: %v", err)
+	default:
+	}
+	device.releaseWrite <- struct{}{}
+	select {
+	case err := <-metadataUpdated:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("metadata revision update did not complete after the device write: %v", ctx.Err())
+	}
+	session.access.RLock()
+	metadataRevision := session.generation.revision
+	session.access.RUnlock()
+	if metadataRevision != 2 {
+		t.Fatalf("metadata-only update did not publish revision 2: %d", metadataRevision)
+	}
+
+	client.revision.Store(2)
+	client.packets <- packet
+	select {
+	case <-device.writeStarted:
+	case <-ctx.Done():
+		t.Fatalf("second stack writer did not block in the fake device: %v", ctx.Err())
+	}
+	replacement := ac.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("198.51.100.2/24")}, MTU: 1400}
+	replaced := make(chan error, 1)
+	go func() {
+		replaced <- session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigRekey, Revision: 3, Config: replacement})
+	}()
+	select {
+	case err := <-replaced:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("configuration replacement did not close the blocked generation: %v", ctx.Err())
+	}
+}
+
+func (*packetSequenceTestClient) WritePacketAtRevision([]byte, uint64) error { return nil }
+func (*packetSequenceTestClient) WritePacket([]byte) error                   { return nil }
+func (*packetSequenceTestClient) ActiveTransport() string                    { return "dtls" }
+func (*packetSequenceTestClient) Close() error                               { return nil }
 
 func TestAnyConnectNetworkGenerationReplacement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -78,7 +222,7 @@ func TestAnyConnectNetworkGenerationReplacement(t *testing.T) {
 	t.Cleanup(func() { _ = session.close() })
 
 	initial := ac.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24"), netip.MustParsePrefix("198.51.100.2/24")}, DNS: []netip.Addr{netip.MustParseAddr("192.0.2.53")}, MTU: 1400}
-	if err := session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigInitial, Config: initial}); err != nil {
+	if err := session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigInitial, Revision: 1, Config: initial}); err != nil {
 		t.Fatal(err)
 	}
 	first, _, err := session.currentDevice()
@@ -93,7 +237,7 @@ func TestAnyConnectNetworkGenerationReplacement(t *testing.T) {
 	metadataOnly := initial
 	metadataOnly.Addresses = []netip.Prefix{initial.Addresses[1], initial.Addresses[0]}
 	metadataOnly.DNS = []netip.Addr{netip.MustParseAddr("192.0.2.54")}
-	if err := session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigReestablishment, Config: metadataOnly}); err != nil {
+	if err := session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigReestablishment, Revision: 2, Config: metadataOnly}); err != nil {
 		t.Fatal(err)
 	}
 	unchanged, _, err := session.currentDevice()
@@ -103,10 +247,16 @@ func TestAnyConnectNetworkGenerationReplacement(t *testing.T) {
 	if unchanged != first {
 		t.Fatal("metadata-only update replaced the stack generation")
 	}
+	session.access.RLock()
+	unchangedRevision := session.generation.revision
+	session.access.RUnlock()
+	if unchangedRevision != 2 {
+		t.Fatalf("metadata-only update did not advance stack revision: %d", unchangedRevision)
+	}
 
 	replaced := metadataOnly
 	replaced.Addresses = []netip.Prefix{netip.MustParsePrefix("198.51.100.2/24")}
-	if err := session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigRekey, Config: replaced}); err != nil {
+	if err := session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigRekey, Revision: 3, Config: replaced}); err != nil {
 		t.Fatal(err)
 	}
 	second, _, err := session.currentDevice()
