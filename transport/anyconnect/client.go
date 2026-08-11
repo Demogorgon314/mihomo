@@ -20,6 +20,7 @@ const (
 	resumptionDTLSCipherSuites  = "OC-DTLS1_2-AES256-GCM:OC-DTLS1_2-AES128-GCM"
 	legacyDTLSCipherSuiteSuffix = ":AES256-SHA:AES128-SHA"
 	modernDTLS12CipherSuites    = "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-GCM-SHA256"
+	maximumIncomingPacketBatch  = 64
 )
 
 // NetworkConfig is a caller-owned snapshot of the negotiated tunnel settings.
@@ -349,6 +350,46 @@ func (c *Client) ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, er
 			continue
 		}
 		return packet, packetRevision, nil
+	}
+}
+
+// ReadPacketsWithRevision returns currently available packets from the active
+// data-plane revision. The caller must invoke release after it has finished
+// using every returned packet.
+func (c *Client) ReadPacketsWithRevision(ctx context.Context) ([][]byte, uint64, func(), error) {
+	for {
+		packetBuffers, packetRevision, err := c.core.ReadDataPacketsWithRevision(ctx, maximumIncomingPacketBatch)
+		if err != nil {
+			if transportErr := c.transportFailure(); transportErr != nil {
+				return nil, 0, nil, transportErr
+			}
+			return nil, 0, nil, err
+		}
+		readyRevision, err := c.WaitDataPlaneReady(ctx)
+		if err != nil {
+			for _, packetBuffer := range packetBuffers {
+				packetBuffer.Release()
+			}
+			return nil, 0, nil, err
+		}
+		if readyRevision != packetRevision {
+			for _, packetBuffer := range packetBuffers {
+				packetBuffer.Release()
+			}
+			continue
+		}
+		packets := make([][]byte, len(packetBuffers))
+		for index, packetBuffer := range packetBuffers {
+			packets[index] = packetBuffer.Bytes()
+		}
+		var releaseOnce sync.Once
+		return packets, packetRevision, func() {
+			releaseOnce.Do(func() {
+				for _, packetBuffer := range packetBuffers {
+					packetBuffer.Release()
+				}
+			})
+		}, nil
 	}
 }
 
