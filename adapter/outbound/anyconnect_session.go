@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
@@ -19,9 +20,34 @@ import (
 )
 
 type anyConnectGeneration struct {
-	device        wireguard.Device
-	resolver      resolver.Resolver
-	configuration ac.NetworkConfig
+	device          wireguard.Device
+	resolver        resolver.Resolver
+	revision        uint64
+	configuration   ac.NetworkConfig
+	dataPlaneAccess sync.RWMutex
+	closed          atomic.Bool
+}
+
+func (g *anyConnectGeneration) writePacket(packet []byte, expectedRevision uint64) (bool, error) {
+	g.dataPlaneAccess.RLock()
+	defer g.dataPlaneAccess.RUnlock()
+	if g.closed.Load() || g.revision != expectedRevision {
+		return false, nil
+	}
+	_, err := g.device.Write([][]byte{packet}, 0)
+	return true, err
+}
+
+func (g *anyConnectGeneration) close() error {
+	var err error
+	if g.closed.CompareAndSwap(false, true) {
+		err = g.device.Close()
+	}
+	// Close the device before waiting so a blocked Write can return and release
+	// the read side of the data-plane gate.
+	g.dataPlaneAccess.Lock()
+	g.dataPlaneAccess.Unlock()
+	return err
 }
 
 type anyConnectSession struct {
@@ -50,8 +76,10 @@ type anyConnectSession struct {
 
 type acClient interface {
 	WaitReady(ctx context.Context) (ac.NetworkConfig, error)
-	ReadPacket(ctx context.Context) ([]byte, error)
+	WaitDataPlaneReady(ctx context.Context) (uint64, error)
+	ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, error)
 	WritePacket(packet []byte) error
+	WritePacketAtRevision(packet []byte, revision uint64) error
 	ActiveTransport() string
 	Close() error
 }
@@ -134,13 +162,16 @@ func (s *anyConnectSession) applyNetworkConfig(event ac.NetworkConfigEvent) erro
 		return net.ErrClosed
 	}
 	if current != nil && sameAnyConnectNetworkIdentity(currentConfiguration, configuration) {
+		current.dataPlaneAccess.Lock()
 		s.access.Lock()
-		if s.generation == current && !s.stopped {
+		if s.generation == current && !s.stopped && !current.closed.Load() {
+			current.revision = event.Revision
 			current.configuration = configuration
 			current.resolver = remoteResolver
 			s.configuration = configuration
 		}
 		s.access.Unlock()
+		current.dataPlaneAccess.Unlock()
 		s.signalInitial(nil)
 		return nil
 	}
@@ -157,7 +188,7 @@ func (s *anyConnectSession) applyNetworkConfig(event ac.NetworkConfigEvent) erro
 		s.signalInitial(err)
 		return err
 	}
-	generation := &anyConnectGeneration{device: device, resolver: remoteResolver, configuration: configuration}
+	generation := &anyConnectGeneration{device: device, resolver: remoteResolver, revision: event.Revision, configuration: configuration}
 
 	s.access.Lock()
 	if s.stopped || s.ctx.Err() != nil {
@@ -172,7 +203,7 @@ func (s *anyConnectSession) applyNetworkConfig(event ac.NetworkConfigEvent) erro
 	s.access.Unlock()
 	go s.stackToTunnel(generation)
 	if previous != nil {
-		_ = previous.device.Close()
+		_ = previous.close()
 	}
 	s.signalInitial(nil)
 	log.Debugln("[AnyConnect](%s) applied %s network configuration: addresses=%v mtu=%d", s.name, event.Reason, configuration.Addresses, configuration.MTU)
@@ -276,7 +307,8 @@ func (s *anyConnectSession) stackToTunnel(generation *anyConnectGeneration) {
 
 func (s *anyConnectSession) writePacket(generation *anyConnectGeneration, packet []byte) (bool, error) {
 	for {
-		if _, err := s.client.WaitReady(s.ctx); err != nil {
+		revision, err := s.client.WaitDataPlaneReady(s.ctx)
+		if err != nil {
 			return true, err
 		}
 		s.access.RLock()
@@ -284,8 +316,12 @@ func (s *anyConnectSession) writePacket(generation *anyConnectGeneration, packet
 			s.access.RUnlock()
 			return false, nil
 		}
-		err := s.client.WritePacket(packet)
+		if generation.revision != revision {
+			s.access.RUnlock()
+			continue
+		}
 		s.access.RUnlock()
+		err = s.client.WritePacketAtRevision(packet, revision)
 		if !errors.Is(err, ac.ErrDataChannelNotReady) {
 			return true, err
 		}
@@ -303,7 +339,7 @@ func (s *anyConnectSession) runTunnelToStack() {
 		}
 	}
 	for s.ctx.Err() == nil {
-		packet, err := s.client.ReadPacket(s.ctx)
+		packet, revision, err := s.client.ReadPacketWithRevision(s.ctx)
 		if err != nil {
 			if s.ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
 				log.Warnln("[AnyConnect](%s) tunnel read failed: %v", s.name, err)
@@ -311,11 +347,19 @@ func (s *anyConnectSession) runTunnelToStack() {
 			s.stop(err)
 			return
 		}
-		generation, configuration := s.currentGeneration()
+		s.access.RLock()
+		generation := s.generation
 		if generation == nil {
+			s.access.RUnlock()
 			s.stop(net.ErrClosed)
 			return
 		}
+		if generation.revision != revision {
+			s.access.RUnlock()
+			continue
+		}
+		configuration := generation.configuration
+		s.access.RUnlock()
 		if !validAnyConnectPacket(packet, configuration.MTU) {
 			s.stop(errors.New("AnyConnect server sent an invalid network packet"))
 			return
@@ -323,8 +367,15 @@ func (s *anyConnectSession) runTunnelToStack() {
 		if !packetMatchesGeneration(packet, configuration) {
 			continue
 		}
-		if _, err := generation.device.Write([][]byte{packet}, 0); err != nil {
-			if !s.isCurrent(generation) {
+		started, err := generation.writePacket(packet, revision)
+		if !started {
+			continue
+		}
+		if err != nil {
+			s.access.RLock()
+			current := s.generation == generation && generation.revision == revision
+			s.access.RUnlock()
+			if !current {
 				continue
 			}
 			if s.ctx.Err() == nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, os.ErrClosed) {
@@ -363,15 +414,6 @@ func validAnyConnectPacket(packet []byte, mtu uint32) bool {
 	}
 }
 
-func (s *anyConnectSession) currentGeneration() (*anyConnectGeneration, ac.NetworkConfig) {
-	s.access.RLock()
-	defer s.access.RUnlock()
-	if s.generation == nil {
-		return nil, ac.NetworkConfig{}
-	}
-	return s.generation, s.generation.configuration
-}
-
 func (s *anyConnectSession) isCurrent(generation *anyConnectGeneration) bool {
 	s.access.RLock()
 	defer s.access.RUnlock()
@@ -394,7 +436,7 @@ func (s *anyConnectSession) stop(err error) {
 		s.generation = nil
 		s.access.Unlock()
 		if generation != nil {
-			_ = generation.device.Close()
+			_ = generation.close()
 		}
 		s.signalInitial(err)
 	})

@@ -58,8 +58,9 @@ const (
 )
 
 type NetworkConfigEvent struct {
-	Reason NetworkConfigEventReason
-	Config NetworkConfig
+	Reason   NetworkConfigEventReason
+	Revision uint64
+	Config   NetworkConfig
 }
 
 // Client isolates the outbound package from sing-openconnect types.
@@ -78,6 +79,7 @@ type Client struct {
 	authError            error
 	networkAccess        sync.Mutex
 	networkConfig        NetworkConfig
+	networkRevision      uint64
 	networkApplied       bool
 	networkHandler       func(NetworkConfigEvent) error
 	networkUpdated       chan struct{}
@@ -295,18 +297,59 @@ func (c *Client) WaitReady(ctx context.Context) (NetworkConfig, error) {
 	return cloneNetworkConfig(result), nil
 }
 
-func (c *Client) ReadPacket(ctx context.Context) ([]byte, error) {
-	packet, err := c.core.ReadDataPacket(ctx)
+// WaitDataPlaneReady waits until the current network configuration is applied
+// locally and returns the revision that is safe for packet I/O.
+func (c *Client) WaitDataPlaneReady(ctx context.Context) (uint64, error) {
+	if err := c.transportFailure(); err != nil {
+		return 0, err
+	}
+	revision, err := c.core.WaitReadyRevision(ctx)
 	if err != nil {
 		if transportErr := c.transportFailure(); transportErr != nil {
-			return nil, transportErr
+			return 0, transportErr
 		}
-		return nil, err
+		if c.dtlsMode == DTLSModeRequire && c.core.ActiveTransport() == openconnect.TransportCSTP {
+			return 0, fmt.Errorf("%w: %v", ErrDTLSRequired, err)
+		}
+		if authErr := c.authenticationError(); authErr != nil {
+			return 0, authErr
+		}
+		return 0, classifyClientError(err, c.secretsSnapshot())
 	}
-	if _, err := c.WaitReady(ctx); err != nil {
-		return nil, err
+	if err := c.waitNetworkRevision(ctx, revision); err != nil {
+		return 0, err
 	}
-	return packet, nil
+	if err := c.ensureDTLSTransport(ctx); err != nil {
+		return 0, err
+	}
+	return revision, nil
+}
+
+func (c *Client) ReadPacket(ctx context.Context) ([]byte, error) {
+	packet, _, err := c.ReadPacketWithRevision(ctx)
+	return packet, err
+}
+
+// ReadPacketWithRevision returns a packet and the applied network revision that
+// received it.
+func (c *Client) ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, error) {
+	for {
+		packet, packetRevision, err := c.core.ReadDataPacketWithRevision(ctx)
+		if err != nil {
+			if transportErr := c.transportFailure(); transportErr != nil {
+				return nil, 0, transportErr
+			}
+			return nil, 0, err
+		}
+		readyRevision, err := c.WaitDataPlaneReady(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+		if readyRevision != packetRevision {
+			continue
+		}
+		return packet, packetRevision, nil
+	}
 }
 
 func (c *Client) WritePacket(packet []byte) error {
@@ -314,6 +357,15 @@ func (c *Client) WritePacket(packet []byte) error {
 		return err
 	}
 	return c.core.WriteDataPacket(packet)
+}
+
+// WritePacketAtRevision writes a packet only while revision still identifies
+// the active data plane.
+func (c *Client) WritePacketAtRevision(packet []byte, revision uint64) error {
+	if err := c.ensureDTLSTransport(c.authCtx); err != nil {
+		return err
+	}
+	return c.core.WriteDataPacketAtRevision(packet, revision)
 }
 
 func (c *Client) ActiveTransport() string {
@@ -386,7 +438,7 @@ func (c *Client) transportFailure() error {
 func (c *Client) handleNetworkConfigEvent(event openconnect.TunnelConfigurationEvent) error {
 	configuration := networkConfigFromCore(event.Configuration)
 	configuration.ActiveTransport = c.core.ActiveTransport()
-	mapped := NetworkConfigEvent{Reason: NetworkConfigEventReason(event.Reason), Config: configuration}
+	mapped := NetworkConfigEvent{Reason: NetworkConfigEventReason(event.Reason), Revision: event.Revision, Config: configuration}
 	eventConfiguration := sanitizeNetworkConfigForEvent(configuration, c.secretsSnapshot())
 	c.publishEvent(Event{Type: EventNetworkConfig, NetworkConfig: &eventConfiguration, NetworkReason: mapped.Reason})
 	return c.applyNetworkConfig(mapped)
@@ -396,16 +448,39 @@ func (c *Client) applyNetworkConfig(event NetworkConfigEvent) error {
 	c.networkAccess.Lock()
 	defer c.networkAccess.Unlock()
 	if c.networkHandler != nil {
-		if err := c.networkHandler(NetworkConfigEvent{Reason: event.Reason, Config: cloneNetworkConfig(event.Config)}); err != nil {
+		if err := c.networkHandler(NetworkConfigEvent{Reason: event.Reason, Revision: event.Revision, Config: cloneNetworkConfig(event.Config)}); err != nil {
 			c.networkError = err
 			c.signalNetworkUpdatedLocked()
 			return err
 		}
 	}
 	c.networkConfig = cloneNetworkConfig(event.Config)
+	c.networkRevision = event.Revision
 	c.networkApplied = true
 	c.signalNetworkUpdatedLocked()
 	return nil
+}
+
+func (c *Client) waitNetworkRevision(ctx context.Context, revision uint64) error {
+	for {
+		c.networkAccess.Lock()
+		if c.networkError != nil {
+			err := c.networkError
+			c.networkAccess.Unlock()
+			return err
+		}
+		if c.networkApplied && c.networkRevision >= revision {
+			c.networkAccess.Unlock()
+			return nil
+		}
+		updated := c.networkUpdated
+		c.networkAccess.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-updated:
+		}
+	}
 }
 
 func (c *Client) waitNetworkConfig(ctx context.Context, configuration NetworkConfig) error {
