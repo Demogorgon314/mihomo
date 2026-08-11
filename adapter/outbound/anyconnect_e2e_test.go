@@ -417,19 +417,19 @@ func TestAnyConnectLegacyDTLSRekey(t *testing.T) {
 	writeAnyConnectEvidenceForTransport(t, "legacy-dtls-rekey", "legacy-dtls-rekey", []testanyconnect.Capability{testanyconnect.CapabilityRekey}, "dtls")
 }
 
-func startModernDTLSOutbound(t *testing.T, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+func startModernDTLSOutbound(t testing.TB, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
 	return startDTLSOutbound(t, mode, false, 0)
 }
 
-func startLegacyDTLSOutbound(t *testing.T, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+func startLegacyDTLSOutbound(t testing.TB, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
 	return startDTLSOutbound(t, mode, true, 0)
 }
 
-func startLegacyDTLSRekeyOutbound(t *testing.T, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+func startLegacyDTLSRekeyOutbound(t testing.TB, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
 	return startDTLSOutbound(t, mode, true, 5*time.Second)
 }
 
-func startDTLSOutbound(t *testing.T, mode string, legacy bool, rekeyInterval time.Duration) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+func startDTLSOutbound(t testing.TB, mode string, legacy bool, rekeyInterval time.Duration) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
 	t.Helper()
 	timeout := 30 * time.Second
 	if legacy {
@@ -469,7 +469,7 @@ func startDTLSOutbound(t *testing.T, mode string, legacy bool, rekeyInterval tim
 	return ctx, outbound, session, gateway, recorder, peerAddress
 }
 
-func waitAnyConnectTransport(t *testing.T, ctx context.Context, session *anyConnectSession, transport string) {
+func waitAnyConnectTransport(t testing.TB, ctx context.Context, session *anyConnectSession, transport string) {
 	t.Helper()
 	for session.client.ActiveTransport() != transport {
 		select {
@@ -1576,11 +1576,11 @@ func TestAnyConnectHandshakeTimeoutIsLatched(t *testing.T) {
 	}
 }
 
-func newFakeAnyConnectOutbound(t *testing.T, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int) *AnyConnect {
+func newFakeAnyConnectOutbound(t testing.TB, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int) *AnyConnect {
 	return newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, handshakeTimeout, nil)
 }
 
-func newFakeAnyConnectOutboundWithOption(t *testing.T, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int, mutate func(*AnyConnectOption)) *AnyConnect {
+func newFakeAnyConnectOutboundWithOption(t testing.TB, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int, mutate func(*AnyConnectOption)) *AnyConnect {
 	t.Helper()
 	_, portText, err := net.SplitHostPort(gateway.Address())
 	if err != nil {
