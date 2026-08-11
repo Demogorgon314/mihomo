@@ -72,6 +72,13 @@ func TestClientPublishesCallerOwnedNetworkConfiguration(t *testing.T) {
 	if event.Reason != NetworkConfigInitial || configuration.ActiveTransport != "cstp" || event.Config.Banner != scenario.Configuration.Banner || !event.Config.TunnelAllDNS {
 		t.Fatalf("unexpected network event: %#v", event)
 	}
+	revision, err := client.WaitDataPlaneReady(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Revision == 0 || revision != event.Revision {
+		t.Fatalf("data plane revision was not synchronized with the applied network event: ready=%d event=%d", revision, event.Revision)
+	}
 	var publicEvent Event
 	for publicEvent.Type != EventNetworkConfig {
 		select {
