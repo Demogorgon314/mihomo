@@ -10,7 +10,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -32,9 +34,10 @@ import (
 )
 
 const (
-	ocservImage    = "mihomo-anyconnect-ocserv:1.3.0-2"
-	ocservUsername = "test"
-	ocservPassword = "test"
+	ocservImage          = "mihomo-anyconnect-ocserv:1.3.0-2"
+	ocservUsername       = "test"
+	ocservPassword       = "test"
+	ocservBenchmarkMagic = 0x4f43424d
 )
 
 func TestOCServFixture(t *testing.T) {
@@ -43,6 +46,172 @@ func TestOCServFixture(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	fixture := startOCServFixture(t, ctx)
+	testOCServCoreDriver(t, ctx, fixture.tcpAddress, fixture.udpAddress, fixture.roots)
+	testOCServOutboundDriver(t, ctx, fixture.containerID, fixture.tcpAddress, fixture.udpAddress, fixture.roots, fixture.certificatePEM)
+	for _, capability := range []Capability{CapabilityModernDTLS, CapabilityPacketIPv4} {
+		if err := phase0CapabilityMatrix.Record(Evidence{
+			Capability: capability,
+			Scenario:   "username-password-modern-dtls",
+			Driver:     DriverCore,
+			Gateway:    "ocserv-1.3.0-2",
+			Transport:  openconnect.TransportDTLS,
+			Address:    "ipv4",
+			Passed:     true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkOCServAnyConnectDataPlaneE2E(b *testing.B) {
+	if os.Getenv("MIHOMO_ANYCONNECT_OCSERV") != "1" {
+		b.Fatal("anyconnect_ocserv tag requires MIHOMO_ANYCONNECT_OCSERV=1")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	fixture := startOCServFixture(b, ctx)
+	cookie, err := RunAuthProbe(ctx, AuthProbeOptions{
+		Address:    fixture.tcpAddress,
+		ServerName: fakeGatewayServerName,
+		RootCAs:    fixture.roots,
+		Username:   ocservUsername,
+		Password:   ocservPassword,
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	_, port, err := net.SplitHostPort(fixture.tcpAddress)
+	if err != nil {
+		b.Fatal(err)
+	}
+	proxy, err := adapter.ParseProxy(map[string]any{
+		"name":        "ocserv-anyconnect-benchmark",
+		"type":        "anyconnect",
+		"server":      fakeGatewayServerName,
+		"port":        port,
+		"cookie":      cookie,
+		"ca":          string(fixture.certificatePEM),
+		"server-name": fakeGatewayServerName,
+		"dtls-mode":   "require",
+	}, adapter.WithDialerForAPI(&ocservOutboundDialer{tcpAddress: fixture.tcpAddress, udpAddress: fixture.udpAddress}))
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = proxy.Close() })
+	target := netip.MustParseAddr("192.168.77.1")
+	for _, payloadSize := range []int{128, 512, 1200, 1372, 16 * 1024, 64 * 1024} {
+		b.Run(fmt.Sprintf("%dB", payloadSize), func(b *testing.B) {
+			connection, dialErr := proxy.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: target, DstPort: 18080})
+			if dialErr != nil {
+				b.Fatal(dialErr)
+			}
+			defer connection.Close()
+			if deadline, loaded := ctx.Deadline(); loaded {
+				if err = connection.SetDeadline(deadline); err != nil {
+					b.Fatal(err)
+				}
+			}
+			packet := newOCServBenchmarkPacket(payloadSize)
+			readDone := make(chan error, 1)
+			go func() {
+				reply := make([]byte, payloadSize)
+				for expected := 0; expected < b.N; expected++ {
+					if _, readErr := io.ReadFull(connection, reply); readErr != nil {
+						readDone <- fmt.Errorf("read packet %d: %w", expected, readErr)
+						return
+					}
+					sequence, validateErr := validateOCServBenchmarkPacket(reply)
+					if validateErr != nil {
+						readDone <- validateErr
+						return
+					}
+					if sequence != uint64(expected) {
+						readDone <- fmt.Errorf("out-of-order packet: got %d, want %d", sequence, expected)
+						return
+					}
+				}
+				readDone <- nil
+			}()
+			b.ReportAllocs()
+			b.SetBytes(int64(payloadSize))
+			b.ResetTimer()
+			for sequence := 0; sequence < b.N; sequence++ {
+				setOCServBenchmarkSequence(packet, uint64(sequence))
+				if writeErr := writeOCServBenchmarkPacket(connection, packet); writeErr != nil {
+					b.StopTimer()
+					_ = connection.Close()
+					<-readDone
+					b.Fatalf("write packet %d: %v", sequence, writeErr)
+				}
+			}
+			readErr := <-readDone
+			b.StopTimer()
+			if readErr != nil {
+				b.Fatal(readErr)
+			}
+		})
+	}
+}
+
+func newOCServBenchmarkPacket(size int) []byte {
+	packet := make([]byte, size)
+	binary.BigEndian.PutUint32(packet[0:4], ocservBenchmarkMagic)
+	binary.BigEndian.PutUint32(packet[4:8], uint32(size))
+	for index := 24; index < size; index++ {
+		packet[index] = byte(index*31 + 17)
+	}
+	return packet
+}
+
+func setOCServBenchmarkSequence(packet []byte, sequence uint64) {
+	binary.BigEndian.PutUint64(packet[8:16], sequence)
+	binary.BigEndian.PutUint64(packet[16:24], ^sequence)
+}
+
+func validateOCServBenchmarkPacket(packet []byte) (uint64, error) {
+	if len(packet) < 24 || binary.BigEndian.Uint32(packet[0:4]) != ocservBenchmarkMagic {
+		return 0, errors.New("invalid ocserv benchmark packet header")
+	}
+	if int(binary.BigEndian.Uint32(packet[4:8])) != len(packet) {
+		return 0, fmt.Errorf("ocserv benchmark packet length mismatch: header=%d actual=%d", binary.BigEndian.Uint32(packet[4:8]), len(packet))
+	}
+	sequence := binary.BigEndian.Uint64(packet[8:16])
+	if binary.BigEndian.Uint64(packet[16:24]) != ^sequence {
+		return 0, fmt.Errorf("ocserv benchmark sequence canary changed at packet %d", sequence)
+	}
+	for index := 24; index < len(packet); index++ {
+		if packet[index] != byte(index*31+17) {
+			return 0, fmt.Errorf("ocserv benchmark payload changed at packet %d offset %d", sequence, index)
+		}
+	}
+	return sequence, nil
+}
+
+func writeOCServBenchmarkPacket(connection net.Conn, packet []byte) error {
+	for len(packet) > 0 {
+		written, err := connection.Write(packet)
+		if err != nil {
+			return err
+		}
+		if written == 0 {
+			return io.ErrUnexpectedEOF
+		}
+		packet = packet[written:]
+	}
+	return nil
+}
+
+type ocservFixture struct {
+	containerID    string
+	tcpAddress     string
+	udpAddress     string
+	roots          *x509.CertPool
+	certificatePEM []byte
+}
+
+func startOCServFixture(t testing.TB, ctx context.Context) ocservFixture {
+	t.Helper()
 	fixtureDirectory := t.TempDir()
 	roots, certificatePEM := writeOCServFixture(t, fixtureDirectory)
 	runDocker(t, ctx, "build", "--pull=false", "--tag", ocservImage, filepath.Join("testdata", "ocserv"))
@@ -89,24 +258,16 @@ func TestOCServFixture(t *testing.T) {
 	if err := connection.Close(); err != nil {
 		t.Fatal(err)
 	}
-	testOCServCoreDriver(t, ctx, tcpAddress, udpAddress, roots)
-	testOCServOutboundDriver(t, ctx, containerID, tcpAddress, udpAddress, roots, certificatePEM)
-	for _, capability := range []Capability{CapabilityModernDTLS, CapabilityPacketIPv4} {
-		if err := phase0CapabilityMatrix.Record(Evidence{
-			Capability: capability,
-			Scenario:   "username-password-modern-dtls",
-			Driver:     DriverCore,
-			Gateway:    "ocserv-1.3.0-2",
-			Transport:  openconnect.TransportDTLS,
-			Address:    "ipv4",
-			Passed:     true,
-		}); err != nil {
-			t.Fatal(err)
-		}
+	return ocservFixture{
+		containerID:    containerID,
+		tcpAddress:     tcpAddress,
+		udpAddress:     udpAddress,
+		roots:          roots,
+		certificatePEM: certificatePEM,
 	}
 }
 
-func writeOCServFixture(t *testing.T, directory string) (*x509.CertPool, []byte) {
+func writeOCServFixture(t testing.TB, directory string) (*x509.CertPool, []byte) {
 	t.Helper()
 	certificatePEM, keyPEM, roots := newOCServCertificate(t)
 	configuration := `auth = "plain[passwd=/fixture/ocpasswd]"
@@ -160,7 +321,7 @@ no-compress-limit = 64
 	return roots, append([]byte(nil), certificatePEM...)
 }
 
-func newOCServCertificate(t *testing.T) ([]byte, []byte, *x509.CertPool) {
+func newOCServCertificate(t testing.TB) ([]byte, []byte, *x509.CertPool) {
 	t.Helper()
 	now := time.Now()
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -214,7 +375,7 @@ func newOCServCertificate(t *testing.T) ([]byte, []byte, *x509.CertPool) {
 	return certificatePEM, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), roots
 }
 
-func waitForOCServAddress(t *testing.T, ctx context.Context, containerID string, port string, waitForTCP bool) string {
+func waitForOCServAddress(t testing.TB, ctx context.Context, containerID string, port string, waitForTCP bool) string {
 	t.Helper()
 	for {
 		output, err := dockerOutput(ctx, "port", containerID, port)
@@ -577,7 +738,7 @@ func waitForOCServCSTPCompression(t *testing.T, ctx context.Context, containerID
 	}
 }
 
-func runDocker(t *testing.T, ctx context.Context, arguments ...string) string {
+func runDocker(t testing.TB, ctx context.Context, arguments ...string) string {
 	t.Helper()
 	output, err := dockerOutput(ctx, arguments...)
 	if err != nil {
