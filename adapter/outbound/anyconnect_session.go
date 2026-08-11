@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -21,7 +20,9 @@ import (
 	wireguard "github.com/metacubex/sing-wireguard"
 )
 
-const anyConnectOutboundPacketBatchSize = 64
+// Keep outbound DTLS writes one packet at a time. Some AnyConnect gateways
+// continue answering DPD while silently dropping DATA after batched UDP sends.
+const anyConnectOutboundPacketBatchSize = 1
 
 type anyConnectGeneration struct {
 	device          wireguard.Device
@@ -355,7 +356,6 @@ func (s *anyConnectSession) writeStackPackets(generation *anyConnectGeneration) 
 			return
 		}
 		packets := [][]byte{packet}
-		runtime.Gosched()
 		for len(packets) < cap(generation.outboundPackets) {
 			select {
 			case packet, loaded = <-generation.outboundPackets:
