@@ -50,28 +50,43 @@ done
 
 workspace_dir=$(mktemp -d "${TMPDIR:-/tmp}/mihomo-anyconnect-bench.XXXXXX")
 trap 'rm -rf "$workspace_dir"' EXIT HUP INT TERM
-(
-	cd "$workspace_dir"
-	go work init "$repo_dir" "$sing_dir" "$dtls_dir"
-)
-workspace_file=$workspace_dir/go.work
+
+mihomo_mod=$workspace_dir/mihomo.mod
+sing_mod=$workspace_dir/sing-openconnect.mod
+cp "$repo_dir/go.mod" "$mihomo_mod"
+cp "$repo_dir/go.sum" "$workspace_dir/mihomo.sum"
+cp "$sing_dir/go.mod" "$sing_mod"
+cp "$sing_dir/go.sum" "$workspace_dir/sing-openconnect.sum"
+
+# Dependency-module replace directives are ignored by Go. Keep the checked-out
+# modules untouched and make the benchmark root module resolve both local forks.
+GOWORK=off go mod edit -modfile="$mihomo_mod" \
+	-replace="github.com/sagernet/sing-openconnect=$sing_dir" \
+	-replace="github.com/pion/dtls/v3=$dtls_dir"
+GOWORK=off go mod edit -modfile="$sing_mod" \
+	-replace="github.com/pion/dtls/v3=$dtls_dir"
 
 run_benchmark() {
 	name=$1
 	directory=$2
-	pattern=$3
-	tags=$4
-	shift 4
+	modfile=$3
+	pattern=$4
+	tags=$5
+	shift 5
 	echo "==> $name"
+	set -- -outputdir="$workspace_dir" -o="$workspace_dir/$name.test" -run '^$' -bench "$pattern" -benchmem -benchtime="$bench_time" -count="$bench_count" "$@"
+	if [ -n "$modfile" ]; then
+		set -- -modfile="$modfile" "$@"
+	fi
 	if [ -n "$tags" ]; then
 		(
 			cd "$directory"
-			GOWORK="$workspace_file" go test -outputdir="$workspace_dir" -tags="$tags" -run '^$' -bench "$pattern" -benchmem -benchtime="$bench_time" -count="$bench_count" "$@"
+			GOWORK=off go test -tags="$tags" "$@"
 		)
 	else
 		(
 			cd "$directory"
-			GOWORK="$workspace_file" go test -outputdir="$workspace_dir" -run '^$' -bench "$pattern" -benchmem -benchtime="$bench_time" -count="$bench_count" "$@"
+			GOWORK=off go test "$@"
 		)
 	fi
 }
@@ -81,22 +96,22 @@ run_phase() {
 	shift
 	case "$current_phase" in
 		p1)
-			run_benchmark P1 "$sing_dir" '^BenchmarkAnyConnectP1OutboundPipeline$' '' "$@"
+			run_benchmark P1 "$sing_dir" "$sing_mod" '^BenchmarkAnyConnectP1OutboundPipeline$' '' "$@"
 			;;
 		p2)
-			run_benchmark P2 "$dtls_dir" '^BenchmarkAnyConnectP2DTLSUDP$' '' "$@"
+			run_benchmark P2 "$dtls_dir" '' '^BenchmarkAnyConnectP2DTLSUDP$' '' "$@"
 			;;
 		p3)
-			run_benchmark P3 "$repo_dir/transport/anyconnect" '^BenchmarkAnyConnectP3DataPlaneReady$' '' "$@"
+			run_benchmark P3 "$repo_dir/transport/anyconnect" "$mihomo_mod" '^BenchmarkAnyConnectP3DataPlaneReady$' '' "$@"
 			;;
 		p4)
-			run_benchmark P4 "$sing_dir" '^BenchmarkAnyConnectP4PacketBufferCopy$' '' "$@"
+			run_benchmark P4 "$sing_dir" "$sing_mod" '^BenchmarkAnyConnectP4PacketBufferCopy$' '' "$@"
 			;;
 		p5)
-			run_benchmark P5 "$sing_dir" '^BenchmarkAnyConnectP5QueueWakeup$' '' "$@"
+			run_benchmark P5 "$sing_dir" "$sing_mod" '^BenchmarkAnyConnectP5QueueWakeup$' '' "$@"
 			;;
 		e2e)
-			run_benchmark E2E "$repo_dir/adapter/outbound" '^BenchmarkAnyConnectDataPlaneE2E$' with_gvisor "$@"
+			run_benchmark E2E "$repo_dir/adapter/outbound" "$mihomo_mod" '^BenchmarkAnyConnectDataPlaneE2E$' with_gvisor "$@"
 			;;
 		*)
 			echo "unknown AnyConnect benchmark phase: $current_phase" >&2
