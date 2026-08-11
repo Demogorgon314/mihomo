@@ -1,9 +1,9 @@
 github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 h1:UQHMgLO+TxOElx5B5HZ4hJQsoJ/PvUvKRhJHDQXO8P8=
 github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
-github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811153042-e4418dd7383a h1:2H3zULUgh7srMi7PPmWgsGna7Xkk3nk3e5pAEC9gWSU=
-github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811153042-e4418dd7383a/go.mod h1:gz1K4jg6c+fq86oQMH4pilpCEOEPwmEr2jY+VcF/mkU=
-github.com/Demogorgon314/sing-openconnect v0.0.0-20260811153352-1895feea08b4 h1:7d0Adx67n7KBN6Y0uMiZ4/W/qHp8UaBgIFhv1uSTPFY=
-github.com/Demogorgon314/sing-openconnect v0.0.0-20260811153352-1895feea08b4/go.mod h1:OtR6M+mUDcO/SZhAmtwzZaMZK8bjOZyQ/olUrIBhMT0=
+github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811162613-ffa317d4c975 h1:zrm/PPr5XnW96CfgfrXw+YN5EWUz7seeLUw9Tx4rdJw=
+github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811162613-ffa317d4c975/go.mod h1:gz1K4jg6c+fq86oQMH4pilpCEOEPwmEr2jY+VcF/mkU=
+github.com/Demogorgon314/sing-openconnect v0.0.0-20260811171630-7367b1d2bded h1:JHhRGRGdnzXJyLo8+Oiew4risknaEryi3RPc4FVkKgc=
+github.com/Demogorgon314/sing-openconnect v0.0.0-20260811171630-7367b1d2bded/go.mod h1:v6/TQ+/Ojtkjv9Yy1b6caDVNK3W1ntFqo0uY3N5ttS0=
 github.com/Microsoft/go-winio v0.6.0 h1:slsWYD/zyx7lCXoZVlvQrj0hPTM1HI4+v1sIda2yDvg=
 github.com/Microsoft/go-winio v0.6.0/go.mod h1:cTAf44im0RAYeL23bpB+fzCyDH2MJiz2BO69KH/soAE=
 github.com/RyuaNerin/go-krypto v1.3.0 h1:smavTzSMAx8iuVlGb4pEwl9MD2qicqMzuXR2QWp2/Pg=
