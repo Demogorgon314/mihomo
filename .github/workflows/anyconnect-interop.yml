@@ -42,7 +42,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: Demogorgon314/sing-openconnect
-          ref: 1895feea08b423d002a142f040ac01d17b988488
+          ref: 7367b1d2bdedf234cc9435d85bfc0c8f847a0156
           path: .anyconnect-upstream
 
       - name: Verify hermetic harness
@@ -106,7 +106,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: Demogorgon314/sing-openconnect
-          ref: 1895feea08b423d002a142f040ac01d17b988488
+          ref: 7367b1d2bdedf234cc9435d85bfc0c8f847a0156
           path: .anyconnect-upstream
 
       - name: Restore accumulated fuzz corpus
