@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -34,12 +35,19 @@ type anyConnectGeneration struct {
 }
 
 func (g *anyConnectGeneration) writePacket(packet []byte, expectedRevision uint64) (bool, error) {
+	return g.writePackets([][]byte{packet}, expectedRevision)
+}
+
+func (g *anyConnectGeneration) writePackets(packets [][]byte, expectedRevision uint64) (bool, error) {
 	g.dataPlaneAccess.RLock()
 	defer g.dataPlaneAccess.RUnlock()
 	if g.closed.Load() || g.revision != expectedRevision {
 		return false, nil
 	}
-	_, err := g.device.Write([][]byte{packet}, 0)
+	written, err := g.device.Write(packets, 0)
+	if err == nil && written != len(packets) {
+		err = io.ErrShortWrite
+	}
 	return true, err
 }
 
@@ -88,6 +96,10 @@ type acClient interface {
 	WritePacketsAtRevision(packets [][]byte, revision uint64) error
 	ActiveTransport() string
 	Close() error
+}
+
+type acPacketBatchReader interface {
+	ReadPacketsWithRevision(ctx context.Context) ([][]byte, uint64, func(), error)
 }
 
 func newAnyConnectSession(
@@ -407,7 +419,7 @@ func (s *anyConnectSession) runTunnelToStack() {
 		}
 	}
 	for s.ctx.Err() == nil {
-		packet, revision, err := s.client.ReadPacketWithRevision(s.ctx)
+		packets, revision, release, err := s.readTunnelPackets()
 		if err != nil {
 			if s.ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
 				log.Warnln("[AnyConnect](%s) tunnel read failed: %v", s.name, err)
@@ -419,23 +431,34 @@ func (s *anyConnectSession) runTunnelToStack() {
 		generation := s.generation
 		if generation == nil {
 			s.access.RUnlock()
+			release()
 			s.stop(net.ErrClosed)
 			return
 		}
 		if generation.revision != revision {
 			s.access.RUnlock()
+			release()
 			continue
 		}
 		configuration := generation.configuration
 		s.access.RUnlock()
-		if !validAnyConnectPacket(packet, configuration.MTU) {
-			s.stop(errors.New("AnyConnect server sent an invalid network packet"))
-			return
+		currentPackets := packets[:0]
+		for _, packet := range packets {
+			if !validAnyConnectPacket(packet, configuration.MTU) {
+				release()
+				s.stop(errors.New("AnyConnect server sent an invalid network packet"))
+				return
+			}
+			if packetMatchesGeneration(packet, configuration) {
+				currentPackets = append(currentPackets, packet)
+			}
 		}
-		if !packetMatchesGeneration(packet, configuration) {
+		if len(currentPackets) == 0 {
+			release()
 			continue
 		}
-		started, err := generation.writePacket(packet, revision)
+		started, err := generation.writePackets(currentPackets, revision)
+		release()
 		if !started {
 			continue
 		}
@@ -453,6 +476,17 @@ func (s *anyConnectSession) runTunnelToStack() {
 			return
 		}
 	}
+}
+
+func (s *anyConnectSession) readTunnelPackets() ([][]byte, uint64, func(), error) {
+	if batchReader, loaded := s.client.(acPacketBatchReader); loaded {
+		return batchReader.ReadPacketsWithRevision(s.ctx)
+	}
+	packet, revision, err := s.client.ReadPacketWithRevision(s.ctx)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	return [][]byte{packet}, revision, func() {}, nil
 }
 
 func packetMatchesGeneration(packet []byte, configuration ac.NetworkConfig) bool {

@@ -104,6 +104,52 @@ type outboundBatchTestClient struct {
 	batches chan []byte
 }
 
+type incomingBatchTestClient struct {
+	generationTestClient
+	read     atomic.Bool
+	released chan struct{}
+}
+
+func (c *incomingBatchTestClient) ReadPacketsWithRevision(ctx context.Context) ([][]byte, uint64, func(), error) {
+	if !c.read.CompareAndSwap(false, true) {
+		<-ctx.Done()
+		return nil, 0, nil, ctx.Err()
+	}
+	packets := make([][]byte, 3)
+	for index := range packets {
+		packets[index] = make([]byte, 20)
+		packets[index][0] = 0x45
+		packets[index][19] = byte(index + 1)
+	}
+	var releaseOnce sync.Once
+	return packets, 1, func() {
+		releaseOnce.Do(func() {
+			for _, packet := range packets {
+				clear(packet)
+			}
+			close(c.released)
+		})
+	}, nil
+}
+
+type incomingBatchTestDevice struct {
+	wireguard.Device
+	writes chan [][]byte
+	calls  atomic.Int32
+}
+
+func (d *incomingBatchTestDevice) Write(packets [][]byte, _ int) (int, error) {
+	d.calls.Add(1)
+	values := make([][]byte, len(packets))
+	for index, packet := range packets {
+		values[index] = slices.Clone(packet)
+	}
+	d.writes <- values
+	return len(packets), nil
+}
+
+func (*incomingBatchTestDevice) Close() error { return nil }
+
 func (*outboundBatchTestClient) WaitReady(context.Context) (ac.NetworkConfig, error) {
 	return ac.NetworkConfig{}, nil
 }
@@ -188,6 +234,57 @@ func TestAnyConnectStackPacketsBatchWithoutTimer(t *testing.T) {
 	}
 	sessionCancel()
 	session.wait.Wait()
+}
+
+func TestAnyConnectTunnelPacketsWriteOneDeviceBatch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := &incomingBatchTestClient{released: make(chan struct{})}
+	device := &incomingBatchTestDevice{writes: make(chan [][]byte, 1)}
+	configuration := ac.NetworkConfig{
+		Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")},
+		MTU:       1400,
+	}
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	session := &anyConnectSession{
+		client:      client,
+		ctx:         sessionCtx,
+		cancel:      sessionCancel,
+		name:        "incoming-batch-test",
+		generation:  &anyConnectGeneration{device: device, revision: 1, configuration: configuration},
+		initialDone: make(chan struct{}),
+		done:        make(chan struct{}),
+	}
+	session.signalInitial(nil)
+	session.wait.Add(1)
+	go session.runTunnelToStack()
+	go func() {
+		session.wait.Wait()
+		close(session.done)
+	}()
+	t.Cleanup(func() { _ = session.close() })
+
+	select {
+	case packets := <-device.writes:
+		if len(packets) != 3 {
+			t.Fatalf("unexpected device batch length: %d", len(packets))
+		}
+		for index, packet := range packets {
+			if packet[19] != byte(index+1) {
+				t.Fatalf("unexpected packet %d after device write: %x", index, packet)
+			}
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	select {
+	case <-client.released:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if calls := device.calls.Load(); calls != 1 {
+		t.Fatalf("expected one device batch write, got %d", calls)
+	}
 }
 
 func (d *blockingGenerationTestDevice) Write([][]byte, int) (int, error) {
