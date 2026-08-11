@@ -424,7 +424,7 @@ func TestClientLegacyDTLSSecurityFaults(t *testing.T) {
 	})
 }
 
-func newDTLSTestClient(t *testing.T, mode string, failUDP bool, fault string) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
+func newDTLSTestClient(t testing.TB, mode string, failUDP bool, fault string) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
 	t.Helper()
 	scenario := testanyconnect.BasicCSTPScenario()
 	scenario.ModernDTLS = true
@@ -433,13 +433,17 @@ func newDTLSTestClient(t *testing.T, mode string, failUDP bool, fault string) (*
 	return newDTLSTestClientForScenario(t, scenario, mode, failUDP, fault)
 }
 
-func newDTLSTestClientForScenario(t *testing.T, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
+func newDTLSTestClientForScenario(t testing.TB, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
 	return newDTLSTestClientForScenarioWithLegacy(t, scenario, mode, failUDP, fault, scenario.LegacyDTLS)
 }
 
-func newDTLSTestClientForScenarioWithLegacy(t *testing.T, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string, legacyDTLS bool) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
+func newDTLSTestClientForScenarioWithLegacy(t testing.TB, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string, legacyDTLS bool) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
+	return newDTLSTestClientForScenarioWithLegacyTimeout(t, scenario, mode, failUDP, fault, legacyDTLS, 8*time.Second)
+}
+
+func newDTLSTestClientForScenarioWithLegacyTimeout(t testing.TB, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string, legacyDTLS bool, timeout time.Duration) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	t.Cleanup(cancel)
 	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
