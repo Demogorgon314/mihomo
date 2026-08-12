@@ -105,37 +105,33 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	if err := validateClientCertificate(config.ClientCertificate); err != nil {
 		return nil, err
 	}
+	if len(config.CertificateAuthority) > 0 && !x509.NewCertPool().AppendCertsFromPEM(config.CertificateAuthority) {
+		return nil, invalidConfig("certificate authority is not valid PEM")
+	}
 	underlay, err := newSingDialer(dialer)
 	if err != nil {
 		return nil, err
 	}
 	tlsConfig := &tls.Config{
-		MinVersion:         tls.VersionTLS12,
 		ServerName:         config.ServerName,
 		InsecureSkipVerify: config.SkipCertVerify, //nolint:gosec // Explicit user opt-in.
 	}
-	if len(config.CertificateAuthority) > 0 {
-		roots := x509.NewCertPool()
-		if !roots.AppendCertsFromPEM(config.CertificateAuthority) {
-			return nil, invalidConfig("certificate authority is not valid PEM")
-		}
-		tlsConfig.RootCAs = roots
-	} else if config.PeerFingerprint == "" && !config.SkipCertVerify {
-		roots, err := x509.SystemCertPool()
-		if err != nil {
-			return nil, invalidConfig("load system certificate authorities")
-		}
-		tlsConfig.RootCAs = roots
+	if !config.AllowInsecureCrypto {
+		tlsConfig.MinVersion = tls.VersionTLS12
 	}
-	tlsOptions := openconnect.ClientTLSOptions{
-		Config:              tlsConfig,
-		Certificate:         openconnect.Material{Content: append([]byte(nil), config.ClientCertificate...)},
-		Key:                 openconnect.Material{Content: append([]byte(nil), config.ClientKey...)},
-		KeyPassword:         config.ClientKeyPassword,
-		SystemTrustDisabled: config.SkipCertVerify,
-	}
+	peerFingerprints := make([]string, 0, len(config.PeerFingerprints)+1)
 	if config.PeerFingerprint != "" {
-		tlsOptions.PeerFingerprints = []string{config.PeerFingerprint}
+		peerFingerprints = append(peerFingerprints, config.PeerFingerprint)
+	}
+	peerFingerprints = append(peerFingerprints, config.PeerFingerprints...)
+	tlsOptions := openconnect.ClientTLSOptions{
+		Config:               tlsConfig,
+		CertificateAuthority: openconnect.Material{Content: append([]byte(nil), config.CertificateAuthority...)},
+		Certificate:          openconnect.Material{Content: append([]byte(nil), config.ClientCertificate...)},
+		Key:                  openconnect.Material{Content: append([]byte(nil), config.ClientKey...)},
+		KeyPassword:          config.ClientKeyPassword,
+		PeerFingerprints:     peerFingerprints,
+		SystemTrustDisabled:  config.SystemTrustDisabled || config.SkipCertVerify,
 	}
 	formEntries := make([]openconnect.FormEntry, 0, len(config.FormEntries))
 	for _, entry := range config.FormEntries {
@@ -182,31 +178,41 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		dtls12CipherSuites = modernDTLS12CipherSuites
 	}
 	core, err := openconnect.NewClient(openconnect.ClientOptions{
-		Context:             ctx,
-		Server:              config.Server,
-		Flavor:              normalizeProtocol(config.Protocol),
-		Cookie:              normalizeCookie(config.Cookie),
-		Username:            config.Username,
-		Password:            config.Password,
-		AuthGroup:           config.AuthGroup,
-		Token:               tokenOptions,
-		NoUDP:               normalizeDTLSMode(config.DTLSMode) == DTLSModeOff,
-		DTLSRequired:        normalizeDTLSMode(config.DTLSMode) == DTLSModeRequire,
-		LegacyDTLSDisabled:  config.LegacyDTLSDisabled,
-		DTLSCipherSuites:    dtlsCipherSuites,
-		DTLS12CipherSuites:  dtls12CipherSuites,
-		CompressionDisabled: compressionDisabled,
-		CompressionMode:     compressionMode,
-		IPv6Disabled:        config.IPv6Disabled,
-		MTU:                 config.MTU,
-		BaseMTU:             config.BaseMTU,
-		QueueLength:         config.QueueLength,
-		DPDInterval:         config.DPDInterval,
-		ReconnectTimeout:    config.ReconnectTimeout,
-		TLSConfig:           tlsOptions,
-		FormEntries:         formEntries,
-		Dialer:              underlay,
-		Logger:              config.Logger,
+		Context:                        ctx,
+		Server:                         config.Server,
+		Flavor:                         normalizeProtocol(config.Protocol),
+		Cookie:                         normalizeCookie(config.Cookie),
+		Username:                       config.Username,
+		Password:                       config.Password,
+		AuthGroup:                      config.AuthGroup,
+		Token:                          tokenOptions,
+		ReportedOS:                     config.ReportedOS,
+		UserAgent:                      config.UserAgent,
+		Version:                        config.Version,
+		LocalHostname:                  config.LocalHostname,
+		NoUDP:                          normalizeDTLSMode(config.DTLSMode) == DTLSModeOff,
+		DTLSRequired:                   normalizeDTLSMode(config.DTLSMode) == DTLSModeRequire,
+		LegacyDTLSDisabled:             config.LegacyDTLSDisabled,
+		DTLSCipherSuites:               dtlsCipherSuites,
+		DTLS12CipherSuites:             dtls12CipherSuites,
+		CompressionDisabled:            compressionDisabled,
+		CompressionMode:                compressionMode,
+		IPv6Disabled:                   config.IPv6Disabled,
+		HTTPKeepAliveDisabled:          config.HTTPKeepAliveDisabled,
+		XMLPostDisabled:                config.XMLPostDisabled,
+		ExternalAuthDisabled:           config.ExternalAuthDisabled || authProvider == nil,
+		PasswordAuthenticationDisabled: config.PasswordAuthenticationDisabled,
+		AllowInsecureCrypto:            config.AllowInsecureCrypto,
+		PFS:                            config.PFS,
+		MTU:                            config.MTU,
+		BaseMTU:                        config.BaseMTU,
+		QueueLength:                    config.QueueLength,
+		DPDInterval:                    config.DPDInterval,
+		ReconnectTimeout:               config.ReconnectTimeout,
+		TLSConfig:                      tlsOptions,
+		FormEntries:                    formEntries,
+		Dialer:                         underlay,
+		Logger:                         config.Logger,
 		OnAuthenticationRejected: func(context.Context) {
 			client.rejectAuthentication()
 		},
