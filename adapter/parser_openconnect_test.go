@@ -18,6 +18,8 @@ func TestParseOpenConnect(t *testing.T) {
 		"cookie":            "test-cookie",
 		"dtls-mode":         "off",
 		"handshake-timeout": 10,
+		"ipv6-disabled":     true,
+		"mtu":               1200,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -83,10 +85,7 @@ func TestParseOpenConnectRejectsInvalidOptions(t *testing.T) {
 		}},
 		{name: "negative timeout", change: func(mapping map[string]any) { mapping["handshake-timeout"] = -1 }},
 		{name: "small MTU", change: func(mapping map[string]any) { mapping["mtu"] = 575 }},
-		{name: "small IPv6 MTU", change: func(mapping map[string]any) {
-			mapping["ipv6"] = true
-			mapping["mtu"] = 1279
-		}},
+		{name: "small IPv6 MTU", change: func(mapping map[string]any) { mapping["mtu"] = 1279 }},
 		{name: "small base MTU", change: func(mapping map[string]any) { mapping["base-mtu"] = 575 }},
 		{name: "negative DPD interval", change: func(mapping map[string]any) { mapping["dpd-interval"] = -1 }},
 		{name: "negative reconnect timeout", change: func(mapping map[string]any) { mapping["reconnect-timeout"] = -1 }},

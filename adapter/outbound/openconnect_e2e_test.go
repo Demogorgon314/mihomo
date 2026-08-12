@@ -235,7 +235,6 @@ func TestAnyConnectOutboundIPv6TCPAndUDPEcho(t *testing.T) {
 	}
 	defer func() { _ = gateway.Close() }()
 	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(openConnectRecordingDialer), 0, func(option *OpenConnectOption) {
-		option.IPv6 = true
 		option.MTU = 1280
 	})
 	defer func() { _ = outbound.Close() }()

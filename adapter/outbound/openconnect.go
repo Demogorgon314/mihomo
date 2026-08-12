@@ -66,7 +66,7 @@ type OpenConnectOption struct {
 	HandshakeTimeout int            `proxy:"handshake-timeout,omitempty"`
 	MTU              int            `proxy:"mtu,omitempty"`
 	BaseMTU          int            `proxy:"base-mtu,omitempty"`
-	IPv6             bool           `proxy:"ipv6,omitempty"`
+	IPv6Disabled     bool           `proxy:"ipv6-disabled,omitempty"`
 	Compression      string         `proxy:"compression,omitempty"`
 	QueueLength      uint32         `proxy:"queue-length,omitempty"`
 	DPDInterval      int            `proxy:"dpd-interval,omitempty"`
@@ -100,7 +100,7 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 	if option.MTU != 0 && (option.MTU < 576 || option.MTU > 65535) {
 		return nil, errors.New("openconnect MTU must be between 576 and 65535")
 	}
-	if option.IPv6 && option.MTU != 0 && option.MTU < 1280 {
+	if !option.IPv6Disabled && option.MTU != 0 && option.MTU < 1280 {
 		return nil, errors.New("openconnect IPv6 MTU must be at least 1280")
 	}
 	if option.BaseMTU != 0 && (option.BaseMTU < 576 || option.BaseMTU > 65535) {
@@ -142,7 +142,7 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 		SkipCertVerify:       option.SkipCertVerify,
 		MTU:                  uint32(option.MTU),
 		BaseMTU:              uint32(option.BaseMTU),
-		IPv6:                 option.IPv6,
+		IPv6Disabled:         option.IPv6Disabled,
 		Compression:          option.Compression,
 		QueueLength:          option.QueueLength,
 		DPDInterval:          time.Duration(option.DPDInterval) * time.Second,

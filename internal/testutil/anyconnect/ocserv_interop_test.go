@@ -103,7 +103,7 @@ func BenchmarkOCServAnyConnectDataPlaneE2E(b *testing.B) {
 		"dtls-key-exchange": "resumption",
 		"legacy-dtls":       false,
 		"compression":       "off",
-		"ipv6":              false,
+		"ipv6-disabled":     true,
 	}, adapter.WithDialerForAPI(&ocservOutboundDialer{tcpAddress: fixture.tcpAddress, udpAddress: fixture.udpAddress}))
 	if err != nil {
 		b.Fatal(err)
