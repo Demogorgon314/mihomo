@@ -1361,15 +1361,21 @@ proxies: # socks5
     username: user
     password: pass
     # authgroup: employees
+    # reported-os: linux-64 # linux, linux-64, win, mac-intel, android, or apple-ios
+    # user-agent: "AnyConnect-compatible OpenConnect VPN Agent 9.21"
+    # version: "9.21"
+    # local-hostname: client-hostname
     # form-entries: # static answers for additional gateway forms
     #   - form-id: login
     #     name: secondary_password
     #     value: answer
-    # ca: | # PEM CA bundle; ca, peer-fingerprint, and skip-cert-verify are mutually exclusive
+    # ca: | # PEM CA bundle; ca, peer fingerprint(s), and skip-cert-verify are mutually exclusive
     #   -----BEGIN CERTIFICATE-----
     #   MIIB...example
     #   -----END CERTIFICATE-----
     # peer-fingerprint: "sha256:..." # certificate pin used instead of CA trust
+    # peer-fingerprints: ["sha256:...", "sha256:..."] # multiple accepted pins for certificate rotation
+    # system-trust-disabled: false # true trusts only configured CA/pin material
     # server-name: vpn.example.com
     # skip-cert-verify: false
     # cert: | # client certificate PEM; cert and key must be configured together
@@ -1377,6 +1383,12 @@ proxies: # socks5
     # key-password: ""
     # token-mode: totp # totp or hotp; HOTP requires a persistent counter provider and is not accepted from YAML alone
     # token-secret: ""
+    # xml-post-disabled: false # use the legacy GET authentication flow
+    # http-keepalive-disabled: false
+    # external-auth-disabled: false # automatically true when no programmatic authentication provider is installed
+    # password-authentication-disabled: false
+    # pfs: false # require forward-secret TLS cipher suites
+    # allow-insecure-crypto: false # permit legacy TLS/ciphers for old gateways
     # dtls-mode: auto # off, auto, or require; auto falls back to CSTP
     # dtls-key-exchange: auto # auto matches OpenConnect negotiation; resumption restricts negotiation to injected AES-GCM resumption
     # legacy-dtls: true # matches OpenConnect; false disables Cisco DTLS 0.9 MD5/SHA-1/AES-CBC compatibility
