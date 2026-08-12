@@ -61,6 +61,7 @@ func classifyClientError(err error, secrets []string) error {
 		strings.Contains(strings.ToLower(err.Error()), "certificate"),
 		strings.Contains(strings.ToLower(err.Error()), "fingerprint"),
 		strings.Contains(strings.ToLower(err.Error()), "client key"),
+		strings.Contains(strings.ToLower(err.Error()), "mca key"),
 		strings.Contains(strings.ToLower(err.Error()), "private key"):
 		return newTerminalError(ErrTLSRejected, redactErrorMessage(err.Error(), secrets))
 	}

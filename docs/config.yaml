@@ -1427,6 +1427,10 @@ proxies: # socks5
     # cert: | # client certificate PEM; cert and key must be configured together
     # key: |
     # key-password: ""
+    # mca-certificate: | # AnyConnect multiple-certificate authentication identity
+    # mca-key: |
+    # mca-key-password: ""
+    # cert-expire-warning: 60 # days; 0 disables the warning, omitted defaults to 60
     # token-mode: totp # totp or hotp; HOTP requires a persistent counter provider and is not accepted from YAML alone
     # token-secret: ""
     # xml-post-disabled: false # use the legacy GET authentication flow
