@@ -62,8 +62,10 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
   `allow-insecure-crypto: true` enables legacy TLS and cipher compatibility and
   should only be used for gateways that cannot negotiate modern cryptography.
 - YAML supports a pre-authenticated cookie, username/password, authgroup,
-  static form entries, client certificates, and TOTP. HOTP is rejected from
-  YAML because its counter needs a persistent programmatic callback.
+  static form entries, client certificates, TOTP, RSA SecurID, and OIDC bearer
+  tokens. RSA mode accepts an optional PIN, encrypted-token password, and device
+  ID. HOTP is rejected from YAML because its counter needs a persistent
+  programmatic callback.
 - Interactive forms, browser login, and host scan require an embedding
   application to provide the corresponding policy callbacks. Without an
   authentication provider, the standard outbound automatically disables

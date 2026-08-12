@@ -168,8 +168,11 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	var tokenOptions *openconnect.TokenOptions
 	if config.Token != nil {
 		tokenOptions = &openconnect.TokenOptions{
-			Mode:          config.Token.Mode,
+			Mode:          normalizeTokenMode(config.Token.Mode),
 			Secret:        config.Token.Secret,
+			PIN:           config.Token.PIN,
+			Password:      config.Token.Password,
+			DeviceID:      config.Token.DeviceID,
 			Counter:       config.Token.Counter,
 			UpdateCounter: config.Token.UpdateCounter,
 		}
@@ -288,6 +291,13 @@ func normalizeCookie(cookie string) string {
 func normalizeDTLSMode(mode string) string {
 	if mode == "" {
 		return DTLSModeAuto
+	}
+	return mode
+}
+
+func normalizeTokenMode(mode string) string {
+	if mode == TokenModeRSA {
+		return openconnect.TokenModeSToken
 	}
 	return mode
 }
@@ -747,7 +757,7 @@ func configSecrets(config Config) []string {
 		string(config.MCAKey),
 	}
 	if config.Token != nil {
-		secrets = append(secrets, config.Token.Secret)
+		secrets = append(secrets, config.Token.Secret, config.Token.PIN, config.Token.Password)
 	}
 	for _, entry := range config.FormEntries {
 		secrets = append(secrets, entry.Value)

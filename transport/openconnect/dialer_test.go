@@ -79,4 +79,10 @@ func TestNormalizeCookie(t *testing.T) {
 	if result := normalizeCookie("webvpn=already-named"); result != "webvpn=already-named" {
 		t.Fatalf("named cookie changed: %q", result)
 	}
+	if result := normalizeTokenMode(TokenModeRSA); result != "stoken" {
+		t.Fatalf("unexpected RSA token mode: %q", result)
+	}
+	if result := normalizeTokenMode(TokenModeOIDC); result != TokenModeOIDC {
+		t.Fatalf("OIDC token mode changed: %q", result)
+	}
 }
