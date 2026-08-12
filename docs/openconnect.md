@@ -26,6 +26,8 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
   if DTLS becomes unavailable; `off` uses CSTP only.
 - `compression` defaults to `stateless`, matching OpenConnect. This negotiates
   per-packet `oc-lz4` or `lzs`; use `off` to disable compression explicitly.
+- IPv6 is enabled by default, matching OpenConnect. Set `ipv6-disabled: true`
+  to request and use IPv4 tunnel configuration only.
 - `dtls-key-exchange: auto` preserves the broadest gateway compatibility and
   lets a PSK-capable server select modern PSK negotiation. `resumption` omits
   that offer and requests injected session resumption, which can substantially
