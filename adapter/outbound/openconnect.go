@@ -21,7 +21,7 @@ import (
 	M "github.com/metacubex/sing/common/metadata"
 )
 
-const defaultOpenConnectHandshakeTimeout = 30 * time.Second
+const defaultOpenConnectPort = 443
 
 type OpenConnect struct {
 	*Base
@@ -47,7 +47,7 @@ type OpenConnectOption struct {
 	Name             string         `proxy:"name"`
 	Protocol         string         `proxy:"protocol,omitempty"`
 	Server           string         `proxy:"server"`
-	Port             int            `proxy:"port"`
+	Port             int            `proxy:"port,omitempty"`
 	Cookie           string         `proxy:"cookie,omitempty"`
 	Username         string         `proxy:"username,omitempty"`
 	Password         string         `proxy:"password,omitempty"`
@@ -87,6 +87,9 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 	}
 	if err := validateOpenConnectServer(option.Server); err != nil {
 		return nil, err
+	}
+	if option.Port == 0 {
+		option.Port = defaultOpenConnectPort
 	}
 	if option.Port < 1 || option.Port > 65535 {
 		return nil, errors.New("openconnect port must be between 1 and 65535")
@@ -398,11 +401,11 @@ func (o *OpenConnect) run(ctx context.Context) (*openConnectSession, error) {
 }
 
 func (o *OpenConnect) start(starting chan struct{}) {
-	timeout := defaultOpenConnectHandshakeTimeout
+	var timeout time.Duration
 	if o.option.HandshakeTimeout > 0 {
 		timeout = time.Duration(o.option.HandshakeTimeout) * time.Second
 	}
-	handshakeCtx, cancel := context.WithTimeout(o.runCtx, timeout)
+	handshakeCtx, cancel := openConnectHandshakeContext(o.runCtx, timeout)
 	defer cancel()
 	session, err := newAnyConnectSession(o.runCtx, handshakeCtx, o.config, o.dialer, o.option.AuthProvider, o.resolverForConfig, o.name)
 	o.access.Lock()
@@ -420,4 +423,11 @@ func (o *OpenConnect) start(starting chan struct{}) {
 	o.starting = nil
 	close(starting)
 	o.access.Unlock()
+}
+
+func openConnectHandshakeContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout == 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
 }

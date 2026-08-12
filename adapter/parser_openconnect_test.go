@@ -14,7 +14,6 @@ func TestParseOpenConnect(t *testing.T) {
 		"type":              "openconnect",
 		"protocol":          "anyconnect",
 		"server":            "vpn.example.com",
-		"port":              443,
 		"cookie":            "test-cookie",
 		"dtls-mode":         "off",
 		"legacy-dtls":       false,
@@ -35,7 +34,6 @@ func TestNewOpenConnectAcceptsIPv6Gateway(t *testing.T) {
 	proxy, err := outbound.NewOpenConnect(outbound.OpenConnectOption{
 		Name:   "ipv6-vpn",
 		Server: "2001:db8::1",
-		Port:   443,
 		Cookie: "test-cookie",
 	})
 	if err != nil {
@@ -55,7 +53,6 @@ func TestParseOpenConnectRejectsInvalidOptions(t *testing.T) {
 	}{
 		{name: "missing server", change: func(mapping map[string]any) { delete(mapping, "server") }},
 		{name: "URL server", change: func(mapping map[string]any) { mapping["server"] = "https://vpn.example.com/path" }},
-		{name: "port zero", change: func(mapping map[string]any) { mapping["port"] = 0 }},
 		{name: "port overflow", change: func(mapping map[string]any) { mapping["port"] = 65536 }},
 		{name: "missing cookie", change: func(mapping map[string]any) { delete(mapping, "cookie") }},
 		{name: "invalid cookie", change: func(mapping map[string]any) { mapping["cookie"] = secret + "\n" }},
