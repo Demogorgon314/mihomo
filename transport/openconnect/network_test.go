@@ -45,7 +45,6 @@ func TestClientPublishesCallerOwnedNetworkConfiguration(t *testing.T) {
 	events := make(chan NetworkConfigEvent, 4)
 	client, gateway, cancel := newTLSScenarioClient(t, scenario, Config{
 		Cookie: scenario.Cookie,
-		IPv6:   true,
 		OnNetworkConfig: func(event NetworkConfigEvent) error {
 			events <- event
 			return nil
@@ -194,7 +193,6 @@ func TestClientIPv6Packet(t *testing.T) {
 		Cookie:               scenario.Cookie,
 		ServerName:           gateway.ServerName(),
 		CertificateAuthority: testanyconnect.RootCAPEM(),
-		IPv6:                 true,
 	}, new(recordingDialer), nil)
 	if err != nil {
 		t.Fatal(err)

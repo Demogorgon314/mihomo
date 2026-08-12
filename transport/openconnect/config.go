@@ -61,7 +61,7 @@ type Config struct {
 	SkipCertVerify       bool
 	MTU                  uint32
 	BaseMTU              uint32
-	IPv6                 bool
+	IPv6Disabled         bool
 	Compression          string
 	DTLSMode             string
 	DTLSKeyExchange      string
@@ -136,7 +136,7 @@ func (c Config) validate(hasAuthProvider bool) error {
 	if c.MTU != 0 && (c.MTU < 576 || c.MTU > 65535) {
 		return invalidConfig("MTU must be between 576 and 65535")
 	}
-	if c.IPv6 && c.MTU != 0 && c.MTU < 1280 {
+	if !c.IPv6Disabled && c.MTU != 0 && c.MTU < 1280 {
 		return invalidConfig("IPv6 MTU must be at least 1280")
 	}
 	if c.BaseMTU != 0 && (c.BaseMTU < 576 || c.BaseMTU > 65535) {
