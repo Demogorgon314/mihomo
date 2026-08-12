@@ -164,4 +164,6 @@ replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-op
 
 replace github.com/pion/dtls/v3 => github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811215135-eef76e0def3f
 
-replace github.com/metacubex/sing-wireguard => github.com/Demogorgon314/sing-wireguard v0.0.0-20260812031228-acea56066efb
+replace github.com/metacubex/sing-wireguard => github.com/Demogorgon314/sing-wireguard v0.0.0-20260812093029-b36422d4aa1c
+
+replace github.com/metacubex/gvisor => github.com/Demogorgon314/gvisor v0.0.0-20260812092912-ac17c043e623
