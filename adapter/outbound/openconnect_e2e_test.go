@@ -389,7 +389,7 @@ func TestAnyConnectLegacyDTLSOutbound(t *testing.T) {
 	gateway.SetDTLSBlackhole(false)
 	waitAnyConnectTransport(t, ctx, session, "dtls")
 	exchangeAnyConnectUDP(t, ctx, packetConn, destination, "legacy DTLS restored UDP echo")
-	writeAnyConnectEvidenceForTransport(t, "legacy-dtls", "legacy-dtls-opt-in", []testanyconnect.Capability{testanyconnect.CapabilityLegacyDTLS}, "dtls")
+	writeAnyConnectEvidenceForTransport(t, "legacy-dtls", "legacy-dtls-default", []testanyconnect.Capability{testanyconnect.CapabilityLegacyDTLS}, "dtls")
 	writeAnyConnectEvidenceForTransport(t, "legacy-dtls-fallback", "legacy-dtls-auto-fallback", []testanyconnect.Capability{testanyconnect.CapabilityFallback}, "cstp")
 }
 
@@ -457,7 +457,6 @@ func startDTLSOutbound(t testing.TB, mode string, legacy bool, rekeyInterval tim
 	t.Cleanup(func() { _ = gateway.Close() })
 	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(openConnectRecordingDialer), 0, func(option *OpenConnectOption) {
 		option.DTLSMode = mode
-		option.LegacyDTLS = legacy
 		option.DPDInterval = 2
 	})
 	t.Cleanup(func() { _ = outbound.Close() })
@@ -1054,7 +1053,6 @@ func runAnyConnectSoak(t *testing.T, dtlsTransport string) {
 		option.ReconnectTimeout = 5
 		option.DPDInterval = 30
 		option.QueueLength = 64
-		option.LegacyDTLS = scenario.LegacyDTLS
 		if dtlsTransport != "" {
 			option.DTLSMode = oc.DTLSModeAuto
 			option.DPDInterval = 2
