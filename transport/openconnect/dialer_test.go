@@ -30,7 +30,7 @@ func (d *stubDialer) ListenPacket(_ context.Context, network string, address str
 
 func TestSingDialerConvertsResolvedUDPDestination(t *testing.T) {
 	wrapped := new(stubDialer)
-	dialer, err := newSingDialer(wrapped)
+	dialer, err := newSingDialer(wrapped, 44444)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,13 +40,30 @@ func TestSingDialerConvertsResolvedUDPDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer packetConn.Close()
-	if wrapped.network != "udp" || wrapped.address != "192.0.2.10:443" || wrapped.remote != netip.MustParseAddrPort("192.0.2.10:443") {
+	if wrapped.network != "udp4" || wrapped.address != "0.0.0.0:44444" || wrapped.remote != netip.MustParseAddrPort("192.0.2.10:443") {
+		t.Fatalf("unexpected converted destination: network=%q address=%q remote=%s", wrapped.network, wrapped.address, wrapped.remote)
+	}
+}
+
+func TestSingDialerUsesIPv6Wildcard(t *testing.T) {
+	wrapped := new(stubDialer)
+	dialer, err := newSingDialer(wrapped, 44444)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := M.SocksaddrFrom(netip.MustParseAddr("2001:db8::10"), 443)
+	packetConn, err := dialer.ListenPacket(context.Background(), destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packetConn.Close()
+	if wrapped.network != "udp6" || wrapped.address != "[::]:44444" || wrapped.remote != netip.MustParseAddrPort("[2001:db8::10]:443") {
 		t.Fatalf("unexpected converted destination: network=%q address=%q remote=%s", wrapped.network, wrapped.address, wrapped.remote)
 	}
 }
 
 func TestSingDialerRejectsUnresolvedUDPDestination(t *testing.T) {
-	dialer, err := newSingDialer(new(stubDialer))
+	dialer, err := newSingDialer(new(stubDialer), 0)
 	if err != nil {
 		t.Fatal(err)
 	}

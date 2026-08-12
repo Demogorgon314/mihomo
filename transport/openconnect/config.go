@@ -39,6 +39,13 @@ type FormEntry struct {
 	SubmissionKey string `proxy:"submission-key,omitempty"`
 	Name          string `proxy:"name,omitempty"`
 	Value         string `proxy:"value,omitempty"`
+	Promote       bool   `proxy:"promote,omitempty"`
+}
+
+type MobileConfig struct {
+	PlatformVersion string `proxy:"platform-version,omitempty"`
+	DeviceType      string `proxy:"device-type,omitempty"`
+	DeviceUniqueID  string `proxy:"device-unique-id,omitempty"`
 }
 
 // Config contains the protocol, authentication, and TLS settings owned by the
@@ -54,6 +61,7 @@ type Config struct {
 	UserAgent                      string
 	Version                        string
 	LocalHostname                  string
+	Mobile                         *MobileConfig
 	FormEntries                    []FormEntry
 	Token                          *TokenConfig
 	ServerName                     string
@@ -78,6 +86,7 @@ type Config struct {
 	DTLSMode                       string
 	DTLSKeyExchange                string
 	LegacyDTLSDisabled             bool
+	DTLSLocalPort                  uint16
 	DPDInterval                    time.Duration
 	ReconnectTimeout               time.Duration
 	QueueLength                    uint32
@@ -140,6 +149,20 @@ func (c Config) validate(hasAuthProvider bool) error {
 	} {
 		if strings.ContainsAny(value, "\x00\r\n") {
 			return invalidConfig(name + " contains an invalid character")
+		}
+	}
+	if c.Mobile != nil {
+		for name, value := range map[string]string{
+			"mobile platform version": c.Mobile.PlatformVersion,
+			"mobile device type":      c.Mobile.DeviceType,
+			"mobile device unique ID": c.Mobile.DeviceUniqueID,
+		} {
+			if value == "" {
+				return invalidConfig(name + " is required")
+			}
+			if strings.ContainsAny(value, "\x00\r\n") {
+				return invalidConfig(name + " contains an invalid character")
+			}
 		}
 	}
 	for _, fingerprint := range c.PeerFingerprints {
@@ -205,6 +228,9 @@ func (c Config) validate(hasAuthProvider bool) error {
 			if strings.ContainsAny(identifier, "\x00\r\n") {
 				return invalidConfig("form entry identifier contains an invalid character")
 			}
+		}
+		if entry.Promote && entry.Value != "" {
+			return invalidConfig("promoted form entry cannot also provide a value")
 		}
 	}
 	return nil

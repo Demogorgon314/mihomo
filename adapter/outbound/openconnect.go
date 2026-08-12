@@ -44,50 +44,52 @@ type OpenConnect struct {
 
 type OpenConnectOption struct {
 	BasicOption
-	Name                           string         `proxy:"name"`
-	Protocol                       string         `proxy:"protocol,omitempty"`
-	Server                         string         `proxy:"server"`
-	Port                           int            `proxy:"port,omitempty"`
-	Cookie                         string         `proxy:"cookie,omitempty"`
-	Username                       string         `proxy:"username,omitempty"`
-	Password                       string         `proxy:"password,omitempty"`
-	AuthGroup                      string         `proxy:"authgroup,omitempty"`
-	ReportedOS                     string         `proxy:"reported-os,omitempty"`
-	UserAgent                      string         `proxy:"user-agent,omitempty"`
-	Version                        string         `proxy:"version,omitempty"`
-	LocalHostname                  string         `proxy:"local-hostname,omitempty"`
-	FormEntries                    []oc.FormEntry `proxy:"form-entries,omitempty"`
-	CA                             string         `proxy:"ca,omitempty"`
-	Cert                           string         `proxy:"cert,omitempty"`
-	Key                            string         `proxy:"key,omitempty"`
-	KeyPassword                    string         `proxy:"key-password,omitempty"`
-	ServerName                     string         `proxy:"server-name,omitempty"`
-	PeerFingerprint                string         `proxy:"peer-fingerprint,omitempty"`
-	PeerFingerprints               []string       `proxy:"peer-fingerprints,omitempty"`
-	SystemTrustDisabled            bool           `proxy:"system-trust-disabled,omitempty"`
-	SkipCertVerify                 bool           `proxy:"skip-cert-verify,omitempty"`
-	HTTPKeepAliveDisabled          bool           `proxy:"http-keepalive-disabled,omitempty"`
-	XMLPostDisabled                bool           `proxy:"xml-post-disabled,omitempty"`
-	ExternalAuthDisabled           bool           `proxy:"external-auth-disabled,omitempty"`
-	PasswordAuthenticationDisabled bool           `proxy:"password-authentication-disabled,omitempty"`
-	PFS                            bool           `proxy:"pfs,omitempty"`
-	AllowInsecureCrypto            bool           `proxy:"allow-insecure-crypto,omitempty"`
-	TokenMode                      string         `proxy:"token-mode,omitempty"`
-	TokenSecret                    string         `proxy:"token-secret,omitempty"`
-	TokenCounter                   uint64         `proxy:"token-counter,omitempty"`
-	HandshakeTimeout               int            `proxy:"handshake-timeout,omitempty"`
-	MTU                            int            `proxy:"mtu,omitempty"`
-	BaseMTU                        int            `proxy:"base-mtu,omitempty"`
-	IPv6Disabled                   bool           `proxy:"ipv6-disabled,omitempty"`
-	Compression                    string         `proxy:"compression,omitempty"`
-	QueueLength                    uint32         `proxy:"queue-length,omitempty"`
-	DPDInterval                    int            `proxy:"dpd-interval,omitempty"`
-	ReconnectTimeout               int            `proxy:"reconnect-timeout,omitempty"`
-	RemoteDnsResolve               bool           `proxy:"remote-dns-resolve,omitempty"`
-	Dns                            []string       `proxy:"dns,omitempty"`
-	DTLSMode                       string         `proxy:"dtls-mode,omitempty"`
-	DTLSKeyExchange                string         `proxy:"dtls-key-exchange,omitempty"`
-	LegacyDTLS                     *bool          `proxy:"legacy-dtls,omitempty"`
+	Name                           string           `proxy:"name"`
+	Protocol                       string           `proxy:"protocol,omitempty"`
+	Server                         string           `proxy:"server"`
+	Port                           int              `proxy:"port,omitempty"`
+	Cookie                         string           `proxy:"cookie,omitempty"`
+	Username                       string           `proxy:"username,omitempty"`
+	Password                       string           `proxy:"password,omitempty"`
+	AuthGroup                      string           `proxy:"authgroup,omitempty"`
+	ReportedOS                     string           `proxy:"reported-os,omitempty"`
+	UserAgent                      string           `proxy:"user-agent,omitempty"`
+	Version                        string           `proxy:"version,omitempty"`
+	LocalHostname                  string           `proxy:"local-hostname,omitempty"`
+	Mobile                         *oc.MobileConfig `proxy:"mobile,omitempty"`
+	FormEntries                    []oc.FormEntry   `proxy:"form-entries,omitempty"`
+	CA                             string           `proxy:"ca,omitempty"`
+	Cert                           string           `proxy:"cert,omitempty"`
+	Key                            string           `proxy:"key,omitempty"`
+	KeyPassword                    string           `proxy:"key-password,omitempty"`
+	ServerName                     string           `proxy:"server-name,omitempty"`
+	PeerFingerprint                string           `proxy:"peer-fingerprint,omitempty"`
+	PeerFingerprints               []string         `proxy:"peer-fingerprints,omitempty"`
+	SystemTrustDisabled            bool             `proxy:"system-trust-disabled,omitempty"`
+	SkipCertVerify                 bool             `proxy:"skip-cert-verify,omitempty"`
+	HTTPKeepAliveDisabled          bool             `proxy:"http-keepalive-disabled,omitempty"`
+	XMLPostDisabled                bool             `proxy:"xml-post-disabled,omitempty"`
+	ExternalAuthDisabled           bool             `proxy:"external-auth-disabled,omitempty"`
+	PasswordAuthenticationDisabled bool             `proxy:"password-authentication-disabled,omitempty"`
+	PFS                            bool             `proxy:"pfs,omitempty"`
+	AllowInsecureCrypto            bool             `proxy:"allow-insecure-crypto,omitempty"`
+	TokenMode                      string           `proxy:"token-mode,omitempty"`
+	TokenSecret                    string           `proxy:"token-secret,omitempty"`
+	TokenCounter                   uint64           `proxy:"token-counter,omitempty"`
+	HandshakeTimeout               int              `proxy:"handshake-timeout,omitempty"`
+	MTU                            int              `proxy:"mtu,omitempty"`
+	BaseMTU                        int              `proxy:"base-mtu,omitempty"`
+	IPv6Disabled                   bool             `proxy:"ipv6-disabled,omitempty"`
+	Compression                    string           `proxy:"compression,omitempty"`
+	QueueLength                    uint32           `proxy:"queue-length,omitempty"`
+	DPDInterval                    int              `proxy:"dpd-interval,omitempty"`
+	ReconnectTimeout               int              `proxy:"reconnect-timeout,omitempty"`
+	RemoteDnsResolve               bool             `proxy:"remote-dns-resolve,omitempty"`
+	Dns                            []string         `proxy:"dns,omitempty"`
+	DTLSMode                       string           `proxy:"dtls-mode,omitempty"`
+	DTLSKeyExchange                string           `proxy:"dtls-key-exchange,omitempty"`
+	LegacyDTLS                     *bool            `proxy:"legacy-dtls,omitempty"`
+	DTLSLocalPort                  int              `proxy:"dtls-local-port,omitempty"`
 
 	AuthProvider       oc.AuthProvider                     `proxy:"-"`
 	TokenCounterUpdate func(context.Context, uint64) error `proxy:"-"`
@@ -127,6 +129,9 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 	if option.ReconnectTimeout < 0 {
 		return nil, errors.New("openconnect reconnect timeout must be non-negative")
 	}
+	if option.DTLSLocalPort < 0 || option.DTLSLocalPort > 65535 {
+		return nil, errors.New("openconnect DTLS local port must be between 0 and 65535")
+	}
 	if option.QueueLength > oc.MaximumQueueLength {
 		return nil, fmt.Errorf("openconnect packet queue length must not exceed %d", oc.MaximumQueueLength)
 	}
@@ -149,6 +154,7 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 		UserAgent:                      option.UserAgent,
 		Version:                        option.Version,
 		LocalHostname:                  option.LocalHostname,
+		Mobile:                         option.Mobile,
 		FormEntries:                    option.FormEntries,
 		ServerName:                     option.ServerName,
 		CertificateAuthority:           []byte(option.CA),
@@ -175,6 +181,7 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 		DTLSMode:                       option.DTLSMode,
 		DTLSKeyExchange:                option.DTLSKeyExchange,
 		LegacyDTLSDisabled:             legacyDTLSDisabled,
+		DTLSLocalPort:                  uint16(option.DTLSLocalPort),
 		Logger:                         log.SingLogger,
 	}
 	if option.TokenMode != "" || option.TokenSecret != "" || option.TokenCounter != 0 || option.TokenCounterUpdate != nil {
