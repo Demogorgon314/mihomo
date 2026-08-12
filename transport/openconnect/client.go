@@ -197,17 +197,20 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	}
 	var dtlsCipherSuites string
 	var dtls12CipherSuites string
-	if config.DTLSKeyExchange == DTLSKeyExchangeResumption {
-		dtlsCipherSuites = resumptionDTLSCipherSuites
-	} else if config.LegacyDTLSDisabled {
-		dtlsCipherSuites = modernDTLSCipherSuites
-		dtls12CipherSuites = modernDTLS12CipherSuites
+	protocol := normalizeProtocol(config.Protocol)
+	if protocol == ProtocolAnyConnect {
+		if config.DTLSKeyExchange == DTLSKeyExchangeResumption {
+			dtlsCipherSuites = resumptionDTLSCipherSuites
+		} else if config.LegacyDTLSDisabled {
+			dtlsCipherSuites = modernDTLSCipherSuites
+			dtls12CipherSuites = modernDTLS12CipherSuites
+		}
 	}
 	core, err := openconnect.NewClient(openconnect.ClientOptions{
 		Context:                        ctx,
 		Server:                         config.Server,
-		Flavor:                         normalizeProtocol(config.Protocol),
-		Cookie:                         normalizeCookie(config.Cookie),
+		Flavor:                         protocol,
+		Cookie:                         normalizeCookie(protocol, config.Cookie),
 		Username:                       config.Username,
 		Password:                       config.Password,
 		AuthGroup:                      config.AuthGroup,
@@ -278,9 +281,12 @@ func validateClientCertificate(content []byte, description string) error {
 	return nil
 }
 
-func normalizeCookie(cookie string) string {
+func normalizeCookie(protocol string, cookie string) string {
 	if cookie == "" {
 		return ""
+	}
+	if protocol != ProtocolAnyConnect {
+		return cookie
 	}
 	if strings.HasPrefix(strings.TrimSpace(cookie), "webvpn=") {
 		return cookie
@@ -321,7 +327,7 @@ func (c *Client) WaitReady(ctx context.Context) (NetworkConfig, error) {
 		if transportErr := c.transportFailure(); transportErr != nil {
 			return NetworkConfig{}, transportErr
 		}
-		if c.dtlsMode == DTLSModeRequire && c.core.ActiveTransport() == openconnect.TransportCSTP {
+		if c.dtlsMode == DTLSModeRequire && isFallbackTransport(c.core.ActiveTransport()) {
 			return NetworkConfig{}, fmt.Errorf("%w: %v", ErrDTLSRequired, err)
 		}
 		if authErr := c.authenticationError(); authErr != nil {
@@ -352,7 +358,7 @@ func (c *Client) WaitDataPlaneReady(ctx context.Context) (uint64, error) {
 		if transportErr := c.transportFailure(); transportErr != nil {
 			return 0, transportErr
 		}
-		if c.dtlsMode == DTLSModeRequire && c.core.ActiveTransport() == openconnect.TransportCSTP {
+		if c.dtlsMode == DTLSModeRequire && isFallbackTransport(c.core.ActiveTransport()) {
 			return 0, fmt.Errorf("%w: %v", ErrDTLSRequired, err)
 		}
 		if authErr := c.authenticationError(); authErr != nil {
@@ -507,7 +513,7 @@ func (c *Client) observeActiveTransport(transport string) error {
 	if transport == openconnect.TransportDTLS {
 		c.dtlsReady = true
 	}
-	failed := c.dtlsMode == DTLSModeRequire && c.dtlsReady && transport == openconnect.TransportCSTP && c.transportError == nil
+	failed := c.dtlsMode == DTLSModeRequire && c.dtlsReady && isFallbackTransport(transport) && c.transportError == nil
 	if failed {
 		c.transportError = ErrDTLSRequired
 	}
@@ -517,6 +523,10 @@ func (c *Client) observeActiveTransport(transport string) error {
 		go func() { _ = c.core.Close() }()
 	}
 	return err
+}
+
+func isFallbackTransport(transport string) bool {
+	return transport != "" && transport != openconnect.TransportDTLS
 }
 
 func (c *Client) transportFailure() error {

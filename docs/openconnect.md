@@ -13,9 +13,9 @@ ocserv suites alone does not make modern or legacy DTLS a supported capability.
 
 See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
 
-- Use `type: openconnect`. `protocol` defaults to `anyconnect`, which is the
-  only protocol currently supported. The former `type: anyconnect` spelling is
-  intentionally not accepted.
+- Use `type: openconnect`. `protocol` accepts `anyconnect` and `f5`, and defaults
+  to `anyconnect`. The former `type: anyconnect` spelling is intentionally not
+  accepted.
 - `port` defaults to `443`.
 - `ca`, peer fingerprint(s), and `skip-cert-verify` are mutually exclusive.
   `peer-fingerprints` accepts multiple pins for certificate rotation. System CA
@@ -30,27 +30,37 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
   `60`; set it to `0` to disable client and MCA certificate expiry warnings.
 - `dns` accepts IP literals only and requires `remote-dns-resolve: true`. This
   prevents the tunnel's private resolver from recursively resolving itself.
-- `dtls-mode: auto` prefers DTLS and falls back to CSTP. `require` fails closed
-  if DTLS becomes unavailable; `off` uses CSTP only.
-- `compression` defaults to `stateless`, matching OpenConnect. This negotiates
-  per-packet `oc-lz4` or `lzs`; use `off` to disable compression explicitly.
+- For `protocol: f5`, a direct cookie may be either the bare `MRHSession` value
+  or a cookie string such as `MRHSession=...; F5_ST=...`. Username/password F5
+  HTML form authentication is also supported.
+- `dtls-mode: auto` prefers DTLS and falls back to CSTP for AnyConnect or
+  PPP-over-TLS for F5. `require` fails closed if DTLS becomes unavailable;
+  `off` uses the corresponding TLS transport only.
+- `compression` defaults to `stateless`, matching OpenConnect. For AnyConnect
+  this negotiates per-packet `oc-lz4` or `lzs`; use `off` to disable compression
+  explicitly. F5 PPP does not use this AnyConnect compression setting.
 - IPv6 is enabled by default, matching OpenConnect. Set `ipv6-disabled: true`
   to request and use IPv4 tunnel configuration only.
-- `base-mtu: 0` probes the CSTP TCP socket for the path MTU (or TCP MSS)
-  and falls back to `1406` when the socket does not expose that information.
+- With AnyConnect, `base-mtu: 0` probes the CSTP TCP socket for the path MTU (or
+  TCP MSS) and falls back to `1406` when the socket does not expose that
+  information. F5 applies the base MTU to its PPP carrier overhead calculation.
 - `handshake-timeout` defaults to `0`, so mihomo does not impose one deadline
   across authentication and tunnel startup. Individual network and protocol
   operations remain bounded; set a positive number of seconds to add an overall
   deadline.
-- `dtls-key-exchange` defaults to `auto`, matching OpenConnect by advertising
-  the supported PSK, injected-resumption, and compatibility suites and letting
-  the gateway select. `resumption` narrows the offer to injected AES-GCM session
-  resumption, which can substantially reduce CPU use on AES-accelerated systems.
-  Gateways without that mechanism fall back according to `dtls-mode`; validate
-  this override against the target gateway before deployment.
-- `legacy-dtls` defaults to `true`, matching OpenConnect compatibility behavior.
-  Set it to `false` to prevent negotiation of Cisco DTLS 0.9 and its deprecated
-  MD5/SHA-1/AES-CBC cryptography.
+- For AnyConnect, `dtls-key-exchange` defaults to `auto`, matching OpenConnect
+  by advertising the supported PSK, injected-resumption, and compatibility
+  suites and letting the gateway select. `resumption` narrows the offer to
+  injected AES-GCM session resumption, which can substantially reduce CPU use
+  on AES-accelerated systems. Gateways without that mechanism fall back
+  according to `dtls-mode`; validate this override against the target gateway
+  before deployment.
+- For AnyConnect, `legacy-dtls` defaults to `true`, matching OpenConnect
+  compatibility behavior. Set it to `false` to prevent negotiation of Cisco
+  DTLS 0.9 and its deprecated MD5/SHA-1/AES-CBC cryptography.
+- F5 uses certificate-authenticated DTLS instead of the AnyConnect key exchange
+  and legacy-DTLS controls. F5 gateways that only advertise DTLS 1.0 require
+  the explicit `allow-insecure-crypto: true` compatibility opt-in.
 - `dtls-local-port` binds the DTLS underlay to a fixed local UDP port; `0`
   lets the operating system select one. IPv4 and IPv6 use their corresponding
   wildcard bind address while preserving mihomo's interface and routing-mark
@@ -130,6 +140,12 @@ capability that passed. The matrix is evidence for that exact layer only:
 - Cisco results are required before claiming the corresponding Cisco modern or
   legacy capability as supported.
 
+F5 has a separate hermetic gateway test covering cookie and username/password
+authentication, configuration fetch, PPP negotiation, certificate DTLS,
+PPP-over-TLS fallback, and outbound TCP/UDP. Validate those capabilities against
+the target BIG-IP version before deployment; the AnyConnect capability matrix
+does not describe F5.
+
 The release workflow also runs bounded parser fuzzing, race tests, coverage
 floors, 1/100/1000-flow stress, repeated startup/close, and accelerated CSTP,
 modern-DTLS, and legacy-DTLS soak tests. Failed fuzz inputs are uploaded as
@@ -139,7 +155,7 @@ with a regression fix.
 For local diagnosis, start with:
 
 ```sh
-go test -race -tags=with_gvisor ./transport/openconnect ./adapter/outbound ./internal/testutil/anyconnect
+go test -race -tags=with_gvisor ./transport/openconnect ./adapter/outbound ./internal/testutil/anyconnect ./internal/testutil/openconnect
 go test -tags=anyconnect_ocserv,with_gvisor ./internal/testutil/anyconnect -run '^TestOCServFixture$' -v
 ```
 
