@@ -22,7 +22,7 @@ import (
 
 	C "github.com/metacubex/mihomo/constant"
 	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
-	ac "github.com/metacubex/mihomo/transport/anyconnect"
+	oc "github.com/metacubex/mihomo/transport/openconnect"
 )
 
 const (
@@ -30,7 +30,7 @@ const (
 	testAnyConnectUDPPort = 15353
 )
 
-type anyConnectRecordingDialer struct {
+type openConnectRecordingDialer struct {
 	access       sync.Mutex
 	tcpCalls     int
 	udpCalls     int
@@ -39,19 +39,19 @@ type anyConnectRecordingDialer struct {
 	dialOnce     sync.Once
 }
 
-type anyConnectBlockingReconnectDialer struct {
+type openConnectBlockingReconnectDialer struct {
 	access           sync.Mutex
 	attempts         int
 	reconnectStarted chan struct{}
 }
 
-type anyConnectSwitchingDialer struct {
+type openConnectSwitchingDialer struct {
 	access           sync.Mutex
 	attempts         int
 	alternateAddress string
 }
 
-func (d *anyConnectSwitchingDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+func (d *openConnectSwitchingDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	d.access.Lock()
 	d.attempts++
 	if d.attempts > 1 {
@@ -61,17 +61,17 @@ func (d *anyConnectSwitchingDialer) DialContext(ctx context.Context, network, ad
 	return (&net.Dialer{}).DialContext(ctx, network, address)
 }
 
-func (*anyConnectSwitchingDialer) ListenPacket(context.Context, string, string, netip.AddrPort) (net.PacketConn, error) {
+func (*openConnectSwitchingDialer) ListenPacket(context.Context, string, string, netip.AddrPort) (net.PacketConn, error) {
 	return nil, errors.New("unexpected UDP underlay")
 }
 
-func (d *anyConnectSwitchingDialer) count() int {
+func (d *openConnectSwitchingDialer) count() int {
 	d.access.Lock()
 	defer d.access.Unlock()
 	return d.attempts
 }
 
-func (d *anyConnectBlockingReconnectDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+func (d *openConnectBlockingReconnectDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	d.access.Lock()
 	d.attempts++
 	attempt := d.attempts
@@ -84,23 +84,23 @@ func (d *anyConnectBlockingReconnectDialer) DialContext(ctx context.Context, net
 	return (&net.Dialer{}).DialContext(ctx, network, address)
 }
 
-func (d *anyConnectBlockingReconnectDialer) ListenPacket(context.Context, string, string, netip.AddrPort) (net.PacketConn, error) {
+func (d *openConnectBlockingReconnectDialer) ListenPacket(context.Context, string, string, netip.AddrPort) (net.PacketConn, error) {
 	return nil, errors.New("unexpected UDP underlay")
 }
 
-func (d *anyConnectBlockingReconnectDialer) count() int {
+func (d *openConnectBlockingReconnectDialer) count() int {
 	d.access.Lock()
 	defer d.access.Unlock()
 	return d.attempts
 }
 
-type anyConnectAuthProviderFunc func(context.Context, ac.AuthChallenge) (ac.AuthResponse, error)
+type openConnectAuthProviderFunc func(context.Context, oc.AuthChallenge) (oc.AuthResponse, error)
 
-func (f anyConnectAuthProviderFunc) Respond(ctx context.Context, challenge ac.AuthChallenge) (ac.AuthResponse, error) {
+func (f openConnectAuthProviderFunc) Respond(ctx context.Context, challenge oc.AuthChallenge) (oc.AuthResponse, error) {
 	return f(ctx, challenge)
 }
 
-func (d *anyConnectRecordingDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+func (d *openConnectRecordingDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	if network == "tcp" && d.dialStarted != nil {
 		d.dialOnce.Do(func() { close(d.dialStarted) })
 	}
@@ -113,7 +113,7 @@ func (d *anyConnectRecordingDialer) DialContext(ctx context.Context, network, ad
 	return (&net.Dialer{}).DialContext(ctx, network, address)
 }
 
-func (d *anyConnectRecordingDialer) ListenPacket(ctx context.Context, network, address string, remote netip.AddrPort) (net.PacketConn, error) {
+func (d *openConnectRecordingDialer) ListenPacket(ctx context.Context, network, address string, remote netip.AddrPort) (net.PacketConn, error) {
 	d.access.Lock()
 	d.udpCalls++
 	d.destinations = append(d.destinations, address)
@@ -121,7 +121,7 @@ func (d *anyConnectRecordingDialer) ListenPacket(ctx context.Context, network, a
 	return (&net.ListenConfig{}).ListenPacket(ctx, network, "")
 }
 
-func (d *anyConnectRecordingDialer) counts() (int, int) {
+func (d *openConnectRecordingDialer) counts() (int, int) {
 	d.access.Lock()
 	defer d.access.Unlock()
 	return d.tcpCalls, d.udpCalls
@@ -151,14 +151,14 @@ func TestAnyConnectOutboundTCPAndUDPEcho(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	dialer := new(anyConnectRecordingDialer)
+	dialer := new(openConnectRecordingDialer)
 	outbound := newFakeAnyConnectOutbound(t, gateway, scenario, dialer, 0)
 	defer func() {
 		if err := outbound.Close(); err != nil {
 			t.Error(err)
 		}
 	}()
-	if outbound.Type() != C.AnyConnect || !outbound.SupportUDP() || !outbound.IsL3Protocol(nil) {
+	if outbound.Type() != C.OpenConnect || !outbound.SupportUDP() || !outbound.IsL3Protocol(nil) {
 		t.Fatalf("unexpected outbound capabilities: type=%s udp=%v l3=%v", outbound.Type(), outbound.SupportUDP(), outbound.IsL3Protocol(nil))
 	}
 	if err := outbound.ResolveUDP(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort}); err != nil {
@@ -234,7 +234,7 @@ func TestAnyConnectOutboundIPv6TCPAndUDPEcho(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = gateway.Close() }()
-	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(openConnectRecordingDialer), 0, func(option *OpenConnectOption) {
 		option.IPv6 = true
 		option.MTU = 1280
 	})
@@ -305,7 +305,7 @@ func TestAnyConnectModernDTLSOutbound(t *testing.T) {
 	})
 
 	t.Run("require fail closed", func(t *testing.T) {
-		ctx, outbound, session, gateway, recorder, peerAddress := startModernDTLSOutbound(t, ac.DTLSModeRequire)
+		ctx, outbound, session, gateway, recorder, peerAddress := startModernDTLSOutbound(t, oc.DTLSModeRequire)
 		waitAnyConnectTransport(t, ctx, session, "dtls")
 		packetConn, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
 		if err != nil {
@@ -348,14 +348,14 @@ func TestAnyConnectModernDTLSOutbound(t *testing.T) {
 		if afterFallback := countRecords(recorder.Records(), "cstp-data"); afterFallback != beforeFallback {
 			t.Fatalf("require mode transmitted data over CSTP: before=%d after=%d", beforeFallback, afterFallback)
 		}
-		if _, err := outbound.run(ctx); !errors.Is(err, ac.ErrDTLSRequired) {
+		if _, err := outbound.run(ctx); !errors.Is(err, oc.ErrDTLSRequired) {
 			t.Fatalf("require failure was not latched by the outbound: %v", err)
 		}
 	})
 }
 
 func TestAnyConnectLegacyDTLSOutbound(t *testing.T) {
-	ctx, outbound, session, gateway, recorder, peerAddress := startLegacyDTLSOutbound(t, ac.DTLSModeAuto)
+	ctx, outbound, session, gateway, recorder, peerAddress := startLegacyDTLSOutbound(t, oc.DTLSModeAuto)
 	waitAnyConnectTransport(t, ctx, session, "dtls")
 	connection, err := outbound.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: peerAddress, DstPort: testAnyConnectTCPPort})
 	if err != nil {
@@ -395,7 +395,7 @@ func TestAnyConnectLegacyDTLSOutbound(t *testing.T) {
 }
 
 func TestAnyConnectLegacyDTLSRekey(t *testing.T) {
-	ctx, outbound, session, _, recorder, peerAddress := startLegacyDTLSRekeyOutbound(t, ac.DTLSModeAuto)
+	ctx, outbound, session, _, recorder, peerAddress := startLegacyDTLSRekeyOutbound(t, oc.DTLSModeAuto)
 	waitAnyConnectTransport(t, ctx, session, "dtls")
 	packetConn, err := outbound.ListenPacketContext(ctx, &C.Metadata{NetWork: C.UDP, DstIP: peerAddress, DstPort: testAnyConnectUDPPort})
 	if err != nil {
@@ -417,19 +417,19 @@ func TestAnyConnectLegacyDTLSRekey(t *testing.T) {
 	writeAnyConnectEvidenceForTransport(t, "legacy-dtls-rekey", "legacy-dtls-rekey", []testanyconnect.Capability{testanyconnect.CapabilityRekey}, "dtls")
 }
 
-func startModernDTLSOutbound(t testing.TB, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+func startModernDTLSOutbound(t testing.TB, mode string) (context.Context, *OpenConnect, *openConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
 	return startDTLSOutbound(t, mode, false, 0)
 }
 
-func startLegacyDTLSOutbound(t testing.TB, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+func startLegacyDTLSOutbound(t testing.TB, mode string) (context.Context, *OpenConnect, *openConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
 	return startDTLSOutbound(t, mode, true, 0)
 }
 
-func startLegacyDTLSRekeyOutbound(t testing.TB, mode string) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+func startLegacyDTLSRekeyOutbound(t testing.TB, mode string) (context.Context, *OpenConnect, *openConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
 	return startDTLSOutbound(t, mode, true, 5*time.Second)
 }
 
-func startDTLSOutbound(t testing.TB, mode string, legacy bool, rekeyInterval time.Duration) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+func startDTLSOutbound(t testing.TB, mode string, legacy bool, rekeyInterval time.Duration) (context.Context, *OpenConnect, *openConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
 	t.Helper()
 	timeout := 30 * time.Second
 	if legacy {
@@ -456,7 +456,7 @@ func startDTLSOutbound(t testing.TB, mode string, legacy bool, rekeyInterval tim
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = gateway.Close() })
-	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(openConnectRecordingDialer), 0, func(option *OpenConnectOption) {
 		option.DTLSMode = mode
 		option.LegacyDTLS = legacy
 		option.DPDInterval = 2
@@ -469,7 +469,7 @@ func startDTLSOutbound(t testing.TB, mode string, legacy bool, rekeyInterval tim
 	return ctx, outbound, session, gateway, recorder, peerAddress
 }
 
-func waitAnyConnectTransport(t testing.TB, ctx context.Context, session *anyConnectSession, transport string) {
+func waitAnyConnectTransport(t testing.TB, ctx context.Context, session *openConnectSession, transport string) {
 	t.Helper()
 	for session.client.ActiveTransport() != transport {
 		select {
@@ -507,8 +507,8 @@ func TestAnyConnectRemoteDNSUsesTunnelAndOverridePrecedence(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = gateway.Close() }()
-			dialer := new(anyConnectRecordingDialer)
-			outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *AnyConnectOption) {
+			dialer := new(openConnectRecordingDialer)
+			outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *OpenConnectOption) {
 				option.RemoteDnsResolve = true
 				option.Dns = testCase.overrideDNS
 			})
@@ -555,8 +555,8 @@ func TestAnyConnectRekeyAndEOFKeepGenerationAndUDPFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = gateway.Close() }()
-	dialer := new(anyConnectRecordingDialer)
-	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *AnyConnectOption) {
+	dialer := new(openConnectRecordingDialer)
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *OpenConnectOption) {
 		option.ReconnectTimeout = 5
 	})
 	defer func() { _ = outbound.Close() }()
@@ -633,7 +633,7 @@ func TestAnyConnectDPDBlackholeKeepsGenerationAndUDPFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = gateway.Close() }()
-	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(openConnectRecordingDialer), 0, func(option *OpenConnectOption) {
 		option.ReconnectTimeout = 5
 		option.DPDInterval = 1
 	})
@@ -708,7 +708,7 @@ func TestAnyConnectReconnectReplacesChangedMTUGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = gateway.Close() }()
-	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(openConnectRecordingDialer), 0, func(option *OpenConnectOption) {
 		option.ReconnectTimeout = 5
 	})
 	defer func() { _ = outbound.Close() }()
@@ -788,8 +788,8 @@ func TestAnyConnectReconnectsAfterUnderlaySwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = secondary.Close() }()
-	dialer := &anyConnectSwitchingDialer{alternateAddress: secondary.Address()}
-	outbound := newFakeAnyConnectOutboundWithOption(t, primary, scenario, dialer, 0, func(option *AnyConnectOption) {
+	dialer := &openConnectSwitchingDialer{alternateAddress: secondary.Address()}
+	outbound := newFakeAnyConnectOutboundWithOption(t, primary, scenario, dialer, 0, func(option *OpenConnectOption) {
 		option.ReconnectTimeout = 5
 	})
 	defer func() { _ = outbound.Close() }()
@@ -854,8 +854,8 @@ func TestAnyConnectReconnectTimeoutIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dialer := new(anyConnectRecordingDialer)
-	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *AnyConnectOption) {
+	dialer := new(openConnectRecordingDialer)
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *OpenConnectOption) {
 		option.ReconnectTimeout = 1
 	})
 	defer func() { _ = outbound.Close() }()
@@ -871,7 +871,7 @@ func TestAnyConnectReconnectTimeoutIsBounded(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if !errors.Is(session.err(), ac.ErrReconnectTimeout) {
+	if !errors.Is(session.err(), oc.ErrReconnectTimeout) {
 		t.Fatalf("unexpected terminal reconnect error: %v", session.err())
 	}
 	attempts, _ := dialer.counts()
@@ -893,8 +893,8 @@ func TestAnyConnectCloseStopsActiveReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = gateway.Close() }()
-	dialer := &anyConnectBlockingReconnectDialer{reconnectStarted: make(chan struct{})}
-	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *AnyConnectOption) {
+	dialer := &openConnectBlockingReconnectDialer{reconnectStarted: make(chan struct{})}
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *OpenConnectOption) {
 		option.ReconnectTimeout = 5
 	})
 	if _, err := outbound.run(ctx); err != nil {
@@ -952,7 +952,7 @@ func TestAnyConnectReleaseStress(t *testing.T) {
 	defer func() { _ = gateway.Close() }()
 
 	t.Run("concurrent UDP flows", func(t *testing.T) {
-		outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+		outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(openConnectRecordingDialer), 0, func(option *OpenConnectOption) {
 			option.QueueLength = 4096
 		})
 		defer func() { _ = outbound.Close() }()
@@ -1008,7 +1008,7 @@ func TestAnyConnectReleaseStress(t *testing.T) {
 		baselineGoroutines := runtime.NumGoroutine()
 		baselineFDs := countAnyConnectFileDescriptors()
 		for range 20 {
-			outbound := newFakeAnyConnectOutbound(t, gateway, scenario, new(anyConnectRecordingDialer), 0)
+			outbound := newFakeAnyConnectOutbound(t, gateway, scenario, new(openConnectRecordingDialer), 0)
 			if _, err := outbound.run(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -1050,14 +1050,14 @@ func runAnyConnectSoak(t *testing.T, dtlsTransport string) {
 		_ = peer.Close()
 		t.Fatal(err)
 	}
-	dialer := new(anyConnectRecordingDialer)
-	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *AnyConnectOption) {
+	dialer := new(openConnectRecordingDialer)
+	outbound := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, 0, func(option *OpenConnectOption) {
 		option.ReconnectTimeout = 5
 		option.DPDInterval = 30
 		option.QueueLength = 64
 		option.LegacyDTLS = scenario.LegacyDTLS
 		if dtlsTransport != "" {
-			option.DTLSMode = ac.DTLSModeAuto
+			option.DTLSMode = oc.DTLSModeAuto
 			option.DPDInterval = 2
 		}
 	})
@@ -1281,7 +1281,7 @@ func TestAnyConnectConcurrentStartupAndCallerCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = gateway.Close() }()
-	dialer := &anyConnectRecordingDialer{dialStarted: make(chan struct{})}
+	dialer := &openConnectRecordingDialer{dialStarted: make(chan struct{})}
 	outbound := newFakeAnyConnectOutbound(t, gateway, scenario, dialer, 0)
 	defer func() { _ = outbound.Close() }()
 
@@ -1302,7 +1302,7 @@ func TestAnyConnectConcurrentStartupAndCallerCancellation(t *testing.T) {
 	}
 
 	const callers = 100
-	results := make(chan *anyConnectSession, callers)
+	results := make(chan *openConnectSession, callers)
 	errorsCh := make(chan error, callers)
 	var wait sync.WaitGroup
 	for range callers {
@@ -1323,7 +1323,7 @@ func TestAnyConnectConcurrentStartupAndCallerCancellation(t *testing.T) {
 	for runErr := range errorsCh {
 		t.Error(runErr)
 	}
-	var first *anyConnectSession
+	var first *openConnectSession
 	for session := range results {
 		if first == nil {
 			first = session
@@ -1357,7 +1357,7 @@ func TestAnyConnectCloseDuringStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = gateway.Close() }()
-	dialer := &anyConnectRecordingDialer{dialStarted: make(chan struct{})}
+	dialer := &openConnectRecordingDialer{dialStarted: make(chan struct{})}
 	outbound := newFakeAnyConnectOutbound(t, gateway, scenario, dialer, 0)
 	runResult := make(chan error, 1)
 	go func() {
@@ -1397,7 +1397,7 @@ func TestAnyConnectSessionStopsOnTunnelReadFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = gateway.Close() }()
-	outbound := newFakeAnyConnectOutbound(t, gateway, scenario, new(anyConnectRecordingDialer), 0)
+	outbound := newFakeAnyConnectOutbound(t, gateway, scenario, new(openConnectRecordingDialer), 0)
 	defer func() { _ = outbound.Close() }()
 	session, err := outbound.run(ctx)
 	if err != nil {
@@ -1448,14 +1448,14 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = gateway.Close() }()
-	provider := anyConnectAuthProviderFunc(func(_ context.Context, challenge ac.AuthChallenge) (ac.AuthResponse, error) {
+	provider := openConnectAuthProviderFunc(func(_ context.Context, challenge oc.AuthChallenge) (oc.AuthResponse, error) {
 		if challenge.Form == nil || len(challenge.Form.Fields) != 1 {
-			return ac.AuthResponse{}, errors.New("unexpected AnyConnect challenge")
+			return oc.AuthResponse{}, errors.New("unexpected AnyConnect challenge")
 		}
 		field := challenge.Form.Fields[0]
-		return ac.AuthResponse{FormValues: map[string]string{field.SubmissionKey: scenario.Authentication.ChallengeResponse}}, nil
+		return oc.AuthResponse{FormValues: map[string]string{field.SubmissionKey: scenario.Authentication.ChallengeResponse}}, nil
 	})
-	authenticated := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+	authenticated := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(openConnectRecordingDialer), 0, func(option *OpenConnectOption) {
 		option.Cookie = ""
 		option.Username = scenario.Authentication.Username
 		option.Password = scenario.Authentication.Password
@@ -1498,10 +1498,10 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = rejectedGateway.Close() }()
-	wrongCredentialProvider := anyConnectAuthProviderFunc(func(_ context.Context, challenge ac.AuthChallenge) (ac.AuthResponse, error) {
+	wrongCredentialProvider := openConnectAuthProviderFunc(func(_ context.Context, challenge oc.AuthChallenge) (oc.AuthResponse, error) {
 		values := make(map[string]string)
 		if challenge.Form == nil {
-			return ac.AuthResponse{}, errors.New("unexpected browser challenge")
+			return oc.AuthResponse{}, errors.New("unexpected browser challenge")
 		}
 		for _, field := range challenge.Form.Fields {
 			switch field.Name {
@@ -1513,15 +1513,15 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 				values[field.SubmissionKey] = field.Value
 			}
 		}
-		return ac.AuthResponse{FormValues: values}, nil
+		return oc.AuthResponse{FormValues: values}, nil
 	})
-	rejected := newFakeAnyConnectOutboundWithOption(t, rejectedGateway, rejectedScenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
+	rejected := newFakeAnyConnectOutboundWithOption(t, rejectedGateway, rejectedScenario, new(openConnectRecordingDialer), 0, func(option *OpenConnectOption) {
 		option.Cookie = ""
 		option.AuthProvider = wrongCredentialProvider
 	})
 	defer func() { _ = rejected.Close() }()
 	_, firstErr := rejected.run(ctx)
-	if !errors.Is(firstErr, ac.ErrAuthRejected) || !ac.IsTerminal(firstErr) {
+	if !errors.Is(firstErr, oc.ErrAuthRejected) || !oc.IsTerminal(firstErr) {
 		t.Fatalf("expected terminal auth-rejected error, got %v", firstErr)
 	}
 	if rejectedCount := countRecords(rejectedRecorder.Records(), "auth-reject"); rejectedCount != 1 {
@@ -1556,7 +1556,7 @@ func TestAnyConnectHandshakeTimeoutIsLatched(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = gateway.Close() }()
-	outbound := newFakeAnyConnectOutbound(t, gateway, scenario, new(anyConnectRecordingDialer), 1)
+	outbound := newFakeAnyConnectOutbound(t, gateway, scenario, new(openConnectRecordingDialer), 1)
 	defer func() { _ = outbound.Close() }()
 
 	started := time.Now()
@@ -1576,11 +1576,11 @@ func TestAnyConnectHandshakeTimeoutIsLatched(t *testing.T) {
 	}
 }
 
-func newFakeAnyConnectOutbound(t testing.TB, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int) *AnyConnect {
+func newFakeAnyConnectOutbound(t testing.TB, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int) *OpenConnect {
 	return newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, handshakeTimeout, nil)
 }
 
-func newFakeAnyConnectOutboundWithOption(t testing.TB, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int, mutate func(*AnyConnectOption)) *AnyConnect {
+func newFakeAnyConnectOutboundWithOption(t testing.TB, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int, mutate func(*OpenConnectOption)) *OpenConnect {
 	t.Helper()
 	_, portText, err := net.SplitHostPort(gateway.Address())
 	if err != nil {
@@ -1590,9 +1590,10 @@ func newFakeAnyConnectOutboundWithOption(t testing.TB, gateway *testanyconnect.G
 	if err != nil {
 		t.Fatal(err)
 	}
-	option := AnyConnectOption{
+	option := OpenConnectOption{
 		BasicOption:      BasicOption{DialerForAPI: dialer},
 		Name:             "fake-anyconnect",
+		Protocol:         oc.ProtocolAnyConnect,
 		Server:           gateway.ServerName(),
 		Port:             port,
 		Cookie:           scenario.Cookie,
@@ -1604,7 +1605,7 @@ func newFakeAnyConnectOutboundWithOption(t testing.TB, gateway *testanyconnect.G
 	if mutate != nil {
 		mutate(&option)
 	}
-	outbound, err := NewAnyConnect(option)
+	outbound, err := NewOpenConnect(option)
 	if err != nil {
 		t.Fatal(err)
 	}

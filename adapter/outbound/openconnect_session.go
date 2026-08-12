@@ -15,7 +15,7 @@ import (
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
-	ac "github.com/metacubex/mihomo/transport/anyconnect"
+	oc "github.com/metacubex/mihomo/transport/openconnect"
 
 	wireguard "github.com/metacubex/sing-wireguard"
 )
@@ -24,28 +24,28 @@ import (
 // continue answering DPD while silently dropping DATA after batched UDP sends.
 // Keep sendmmsg batches deliberately small. Larger bursts have caused
 // interoperability failures with real AnyConnect gateways.
-const anyConnectOutboundPacketBatchSize = 2
+const openConnectOutboundPacketBatchSize = 2
 
-type anyConnectGeneration struct {
+type openConnectGeneration struct {
 	device          wireguard.Device
 	resolver        resolver.Resolver
 	revision        uint64
-	configuration   ac.NetworkConfig
+	configuration   oc.NetworkConfig
 	outboundPackets chan []byte
 	packetPool      sync.Pool
 	dataPlaneAccess sync.RWMutex
 	closed          atomic.Bool
 }
 
-type anyConnectGRODevice interface {
+type openConnectGRODevice interface {
 	WriteGRO(bufs [][]byte, offset int) (count int, err error)
 }
 
-func (g *anyConnectGeneration) writePacket(packet []byte, expectedRevision uint64) (bool, error) {
+func (g *openConnectGeneration) writePacket(packet []byte, expectedRevision uint64) (bool, error) {
 	return g.writePackets([][]byte{packet}, expectedRevision)
 }
 
-func (g *anyConnectGeneration) writePackets(packets [][]byte, expectedRevision uint64) (bool, error) {
+func (g *openConnectGeneration) writePackets(packets [][]byte, expectedRevision uint64) (bool, error) {
 	g.dataPlaneAccess.RLock()
 	defer g.dataPlaneAccess.RUnlock()
 	if g.closed.Load() || g.revision != expectedRevision {
@@ -53,7 +53,7 @@ func (g *anyConnectGeneration) writePackets(packets [][]byte, expectedRevision u
 	}
 	var written int
 	var err error
-	if groDevice, loaded := g.device.(anyConnectGRODevice); loaded && len(packets) > 1 {
+	if groDevice, loaded := g.device.(openConnectGRODevice); loaded && len(packets) > 1 {
 		written, err = groDevice.WriteGRO(packets, 0)
 	} else {
 		written, err = g.device.Write(packets, 0)
@@ -64,7 +64,7 @@ func (g *anyConnectGeneration) writePackets(packets [][]byte, expectedRevision u
 	return true, err
 }
 
-func (g *anyConnectGeneration) close() error {
+func (g *openConnectGeneration) close() error {
 	var err error
 	if g.closed.CompareAndSwap(false, true) {
 		err = g.device.Close()
@@ -76,17 +76,17 @@ func (g *anyConnectGeneration) close() error {
 	return err
 }
 
-type anyConnectSession struct {
+type openConnectSession struct {
 	client acClient
 	ctx    context.Context
 	cancel context.CancelFunc
 	name   string
 
-	resolverFactory func(configuration ac.NetworkConfig) (resolver.Resolver, error)
+	resolverFactory func(configuration oc.NetworkConfig) (resolver.Resolver, error)
 
 	access        sync.RWMutex
-	generation    *anyConnectGeneration
-	configuration ac.NetworkConfig
+	generation    *openConnectGeneration
+	configuration oc.NetworkConfig
 	stopped       bool
 
 	initialOnce sync.Once
@@ -101,7 +101,7 @@ type anyConnectSession struct {
 }
 
 type acClient interface {
-	WaitReady(ctx context.Context) (ac.NetworkConfig, error)
+	WaitReady(ctx context.Context) (oc.NetworkConfig, error)
 	WaitDataPlaneReady(ctx context.Context) (uint64, error)
 	ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, error)
 	WritePacket(packet []byte) error
@@ -118,14 +118,14 @@ type acPacketBatchReader interface {
 func newAnyConnectSession(
 	runCtx context.Context,
 	handshakeCtx context.Context,
-	config ac.Config,
+	config oc.Config,
 	dialer C.Dialer,
-	authProvider ac.AuthProvider,
-	resolverFactory func(configuration ac.NetworkConfig) (resolver.Resolver, error),
+	authProvider oc.AuthProvider,
+	resolverFactory func(configuration oc.NetworkConfig) (resolver.Resolver, error),
 	name string,
-) (*anyConnectSession, error) {
+) (*openConnectSession, error) {
 	sessionCtx, cancel := context.WithCancel(runCtx)
-	session := &anyConnectSession{
+	session := &openConnectSession{
 		ctx:             sessionCtx,
 		cancel:          cancel,
 		name:            name,
@@ -134,10 +134,10 @@ func newAnyConnectSession(
 		done:            make(chan struct{}),
 	}
 	config.OnNetworkConfig = session.applyNetworkConfig
-	client, err := ac.NewClient(runCtx, config, dialer, authProvider)
+	client, err := oc.NewClient(runCtx, config, dialer, authProvider)
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("create AnyConnect client: %w", err)
+		return nil, fmt.Errorf("create OpenConnect client: %w", err)
 	}
 	session.client = client
 	session.wait.Add(1)
@@ -148,11 +148,11 @@ func newAnyConnectSession(
 	}()
 	if err := client.Start(); err != nil {
 		_ = session.close()
-		return nil, fmt.Errorf("start AnyConnect client: %w", err)
+		return nil, fmt.Errorf("start OpenConnect client: %w", err)
 	}
 	if _, err := client.WaitReady(handshakeCtx); err != nil {
 		_ = session.close()
-		return nil, fmt.Errorf("connect AnyConnect server: %w", err)
+		return nil, fmt.Errorf("connect OpenConnect server: %w", err)
 	}
 	select {
 	case <-handshakeCtx.Done():
@@ -165,11 +165,11 @@ func newAnyConnectSession(
 		return nil, session.initialErr
 	}
 	configuration := session.configurationSnapshot()
-	log.Debugln("[AnyConnect](%s) tunnel ready: addresses=%v mtu=%d transport=%s", name, configuration.Addresses, configuration.MTU, configuration.ActiveTransport)
+	log.Debugln("[OpenConnect](%s) tunnel ready: addresses=%v mtu=%d transport=%s", name, configuration.Addresses, configuration.MTU, configuration.ActiveTransport)
 	return session, nil
 }
 
-func (s *anyConnectSession) applyNetworkConfig(event ac.NetworkConfigEvent) error {
+func (s *openConnectSession) applyNetworkConfig(event oc.NetworkConfigEvent) error {
 	configuration, err := validateAnyConnectNetworkConfig(event.Config)
 	if err != nil {
 		s.signalInitial(err)
@@ -183,7 +183,7 @@ func (s *anyConnectSession) applyNetworkConfig(event ac.NetworkConfigEvent) erro
 
 	s.access.RLock()
 	current := s.generation
-	var currentConfiguration ac.NetworkConfig
+	var currentConfiguration oc.NetworkConfig
 	if current != nil {
 		currentConfiguration = current.configuration
 	}
@@ -209,22 +209,22 @@ func (s *anyConnectSession) applyNetworkConfig(event ac.NetworkConfigEvent) erro
 
 	device, err := wireguard.NewStackDevice(configuration.Addresses, configuration.MTU)
 	if err != nil {
-		err = fmt.Errorf("create AnyConnect stack device: %w", err)
+		err = fmt.Errorf("create OpenConnect stack device: %w", err)
 		s.signalInitial(err)
 		return err
 	}
 	if err := device.Start(); err != nil {
 		_ = device.Close()
-		err = fmt.Errorf("start AnyConnect stack device: %w", err)
+		err = fmt.Errorf("start OpenConnect stack device: %w", err)
 		s.signalInitial(err)
 		return err
 	}
-	generation := &anyConnectGeneration{
+	generation := &openConnectGeneration{
 		device:          device,
 		resolver:        remoteResolver,
 		revision:        event.Revision,
 		configuration:   configuration,
-		outboundPackets: make(chan []byte, anyConnectOutboundPacketBatchSize),
+		outboundPackets: make(chan []byte, openConnectOutboundPacketBatchSize),
 	}
 	packetSize := int(configuration.MTU)
 	generation.packetPool.New = func() any {
@@ -248,13 +248,13 @@ func (s *anyConnectSession) applyNetworkConfig(event ac.NetworkConfigEvent) erro
 		_ = previous.close()
 	}
 	s.signalInitial(nil)
-	log.Debugln("[AnyConnect](%s) applied %s network configuration: addresses=%v mtu=%d", s.name, event.Reason, configuration.Addresses, configuration.MTU)
+	log.Debugln("[OpenConnect](%s) applied %s network configuration: addresses=%v mtu=%d", s.name, event.Reason, configuration.Addresses, configuration.MTU)
 	return nil
 }
 
-func validateAnyConnectNetworkConfig(configuration ac.NetworkConfig) (ac.NetworkConfig, error) {
+func validateAnyConnectNetworkConfig(configuration oc.NetworkConfig) (oc.NetworkConfig, error) {
 	if len(configuration.Addresses) == 0 {
-		return ac.NetworkConfig{}, errors.New("AnyConnect server did not assign a tunnel address")
+		return oc.NetworkConfig{}, errors.New("OpenConnect server did not assign a tunnel address")
 	}
 	if configuration.MTU == 0 {
 		configuration.MTU = 1400
@@ -262,19 +262,19 @@ func validateAnyConnectNetworkConfig(configuration ac.NetworkConfig) (ac.Network
 	minimumMTU := uint32(576)
 	for _, prefix := range configuration.Addresses {
 		if !prefix.IsValid() || prefix.Addr().IsUnspecified() {
-			return ac.NetworkConfig{}, fmt.Errorf("AnyConnect server assigned an invalid tunnel address: %s", prefix)
+			return oc.NetworkConfig{}, fmt.Errorf("OpenConnect server assigned an invalid tunnel address: %s", prefix)
 		}
 		if prefix.Addr().Is6() {
 			minimumMTU = 1280
 		}
 	}
 	if configuration.MTU < minimumMTU || configuration.MTU > 65535 {
-		return ac.NetworkConfig{}, fmt.Errorf("AnyConnect server assigned MTU %d outside %d..65535", configuration.MTU, minimumMTU)
+		return oc.NetworkConfig{}, fmt.Errorf("OpenConnect server assigned MTU %d outside %d..65535", configuration.MTU, minimumMTU)
 	}
 	return configuration, nil
 }
 
-func sameAnyConnectNetworkIdentity(left ac.NetworkConfig, right ac.NetworkConfig) bool {
+func sameAnyConnectNetworkIdentity(left oc.NetworkConfig, right oc.NetworkConfig) bool {
 	if left.MTU != right.MTU || len(left.Addresses) != len(right.Addresses) {
 		return false
 	}
@@ -291,14 +291,14 @@ func sameAnyConnectNetworkIdentity(left ac.NetworkConfig, right ac.NetworkConfig
 	return slices.Equal(leftAddresses, rightAddresses)
 }
 
-func (s *anyConnectSession) signalInitial(err error) {
+func (s *openConnectSession) signalInitial(err error) {
 	s.initialOnce.Do(func() {
 		s.initialErr = err
 		close(s.initialDone)
 	})
 }
 
-func (s *anyConnectSession) currentDevice() (wireguard.Device, resolver.Resolver, error) {
+func (s *openConnectSession) currentDevice() (wireguard.Device, resolver.Resolver, error) {
 	s.access.RLock()
 	defer s.access.RUnlock()
 	if s.stopped || s.generation == nil {
@@ -307,13 +307,13 @@ func (s *anyConnectSession) currentDevice() (wireguard.Device, resolver.Resolver
 	return s.generation.device, s.generation.resolver, nil
 }
 
-func (s *anyConnectSession) configurationSnapshot() ac.NetworkConfig {
+func (s *openConnectSession) configurationSnapshot() oc.NetworkConfig {
 	s.access.RLock()
 	defer s.access.RUnlock()
 	return s.configuration
 }
 
-func (s *anyConnectSession) readStackPackets(generation *anyConnectGeneration) {
+func (s *openConnectSession) readStackPackets(generation *openConnectGeneration) {
 	defer s.wait.Done()
 	defer close(generation.outboundPackets)
 	var packet []byte
@@ -334,7 +334,7 @@ func (s *anyConnectSession) readStackPackets(generation *anyConnectGeneration) {
 				return
 			}
 			if s.ctx.Err() == nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, os.ErrClosed) {
-				log.Warnln("[AnyConnect](%s) stack read failed: %v", s.name, err)
+				log.Warnln("[OpenConnect](%s) stack read failed: %v", s.name, err)
 			}
 			s.stop(err)
 			return
@@ -354,7 +354,7 @@ func (s *anyConnectSession) readStackPackets(generation *anyConnectGeneration) {
 	}
 }
 
-func (s *anyConnectSession) writeStackPackets(generation *anyConnectGeneration) {
+func (s *openConnectSession) writeStackPackets(generation *openConnectGeneration) {
 	defer s.wait.Done()
 	defer func() {
 		for packet := range generation.outboundPackets {
@@ -389,7 +389,7 @@ func (s *anyConnectSession) writeStackPackets(generation *anyConnectGeneration) 
 		}
 		if err != nil {
 			if s.ctx.Err() == nil && !errors.Is(err, net.ErrClosed) {
-				log.Warnln("[AnyConnect](%s) tunnel write failed: %v", s.name, err)
+				log.Warnln("[OpenConnect](%s) tunnel write failed: %v", s.name, err)
 			}
 			s.stop(err)
 			return
@@ -397,7 +397,7 @@ func (s *anyConnectSession) writeStackPackets(generation *anyConnectGeneration) 
 	}
 }
 
-func (s *anyConnectSession) writePackets(generation *anyConnectGeneration, packets [][]byte) (bool, error) {
+func (s *openConnectSession) writePackets(generation *openConnectGeneration, packets [][]byte) (bool, error) {
 	for {
 		revision, err := s.client.WaitDataPlaneReady(s.ctx)
 		if err != nil {
@@ -414,13 +414,13 @@ func (s *anyConnectSession) writePackets(generation *anyConnectGeneration, packe
 		}
 		s.access.RUnlock()
 		err = s.client.WritePacketsAtRevision(packets, revision)
-		if !errors.Is(err, ac.ErrDataChannelNotReady) {
+		if !errors.Is(err, oc.ErrDataChannelNotReady) {
 			return true, err
 		}
 	}
 }
 
-func (s *anyConnectSession) runTunnelToStack() {
+func (s *openConnectSession) runTunnelToStack() {
 	defer s.wait.Done()
 	select {
 	case <-s.ctx.Done():
@@ -434,7 +434,7 @@ func (s *anyConnectSession) runTunnelToStack() {
 		packets, revision, release, err := s.readTunnelPackets()
 		if err != nil {
 			if s.ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
-				log.Warnln("[AnyConnect](%s) tunnel read failed: %v", s.name, err)
+				log.Warnln("[OpenConnect](%s) tunnel read failed: %v", s.name, err)
 			}
 			s.stop(err)
 			return
@@ -458,7 +458,7 @@ func (s *anyConnectSession) runTunnelToStack() {
 		for _, packet := range packets {
 			if !validAnyConnectPacket(packet, configuration.MTU) {
 				release()
-				s.stop(errors.New("AnyConnect server sent an invalid network packet"))
+				s.stop(errors.New("OpenConnect server sent an invalid network packet"))
 				return
 			}
 			if packetMatchesGeneration(packet, configuration) {
@@ -482,7 +482,7 @@ func (s *anyConnectSession) runTunnelToStack() {
 				continue
 			}
 			if s.ctx.Err() == nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, os.ErrClosed) {
-				log.Warnln("[AnyConnect](%s) stack write failed: %v", s.name, err)
+				log.Warnln("[OpenConnect](%s) stack write failed: %v", s.name, err)
 			}
 			s.stop(err)
 			return
@@ -490,7 +490,7 @@ func (s *anyConnectSession) runTunnelToStack() {
 	}
 }
 
-func (s *anyConnectSession) readTunnelPackets() ([][]byte, uint64, func(), error) {
+func (s *openConnectSession) readTunnelPackets() ([][]byte, uint64, func(), error) {
 	if batchReader, loaded := s.client.(acPacketBatchReader); loaded {
 		return batchReader.ReadPacketsWithRevision(s.ctx)
 	}
@@ -501,7 +501,7 @@ func (s *anyConnectSession) readTunnelPackets() ([][]byte, uint64, func(), error
 	return [][]byte{packet}, revision, func() {}, nil
 }
 
-func packetMatchesGeneration(packet []byte, configuration ac.NetworkConfig) bool {
+func packetMatchesGeneration(packet []byte, configuration oc.NetworkConfig) bool {
 	if !validAnyConnectPacket(packet, configuration.MTU) {
 		return false
 	}
@@ -528,13 +528,13 @@ func validAnyConnectPacket(packet []byte, mtu uint32) bool {
 	}
 }
 
-func (s *anyConnectSession) isCurrent(generation *anyConnectGeneration) bool {
+func (s *openConnectSession) isCurrent(generation *openConnectGeneration) bool {
 	s.access.RLock()
 	defer s.access.RUnlock()
 	return s.generation == generation
 }
 
-func (s *anyConnectSession) stop(err error) {
+func (s *openConnectSession) stop(err error) {
 	s.stopOnce.Do(func() {
 		if err == nil {
 			err = net.ErrClosed
@@ -556,7 +556,7 @@ func (s *anyConnectSession) stop(err error) {
 	})
 }
 
-func (s *anyConnectSession) err() error {
+func (s *openConnectSession) err() error {
 	s.errLock.Lock()
 	defer s.errLock.Unlock()
 	if s.stopErr == nil {
@@ -565,7 +565,7 @@ func (s *anyConnectSession) err() error {
 	return s.stopErr
 }
 
-func (s *anyConnectSession) close() error {
+func (s *openConnectSession) close() error {
 	s.stop(net.ErrClosed)
 	<-s.done
 	return nil

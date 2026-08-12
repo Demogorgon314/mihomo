@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"context"
@@ -157,6 +157,7 @@ func TestClientRejectsInvalidConfigWithoutLeakingCookie(t *testing.T) {
 		{name: "conflicting TLS trust", config: Config{Server: "https://vpn.example", Cookie: secret, CertificateAuthority: []byte("test CA"), PeerFingerprint: "sha256:0000"}},
 		{name: "invalid server name", config: Config{Server: "https://vpn.example", Cookie: secret, ServerName: "bad\nname"}},
 		{name: "unbounded packet queue", config: Config{Server: "https://vpn.example", Cookie: secret, QueueLength: MaximumQueueLength + 1}},
+		{name: "unsupported protocol", config: Config{Server: "https://vpn.example", Protocol: "gp", Cookie: secret}},
 		{name: "invalid DTLS mode", config: Config{Server: "https://vpn.example", Cookie: secret, DTLSMode: "invalid"}},
 		{name: "invalid DTLS key exchange", config: Config{Server: "https://vpn.example", Cookie: secret, DTLSKeyExchange: "invalid"}},
 		{name: "legacy DTLS while disabled", config: Config{Server: "https://vpn.example", Cookie: secret, DTLSMode: DTLSModeOff, LegacyDTLS: true}},
