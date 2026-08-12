@@ -44,33 +44,45 @@ type FormEntry struct {
 // Config contains the protocol, authentication, and TLS settings owned by the
 // mihomo façade. All byte slices and form entries are copied before use.
 type Config struct {
-	Server               string
-	Protocol             string
-	Cookie               string
-	Username             string
-	Password             string
-	AuthGroup            string
-	FormEntries          []FormEntry
-	Token                *TokenConfig
-	ServerName           string
-	CertificateAuthority []byte
-	ClientCertificate    []byte
-	ClientKey            []byte
-	ClientKeyPassword    string
-	PeerFingerprint      string
-	SkipCertVerify       bool
-	MTU                  uint32
-	BaseMTU              uint32
-	IPv6Disabled         bool
-	Compression          string
-	DTLSMode             string
-	DTLSKeyExchange      string
-	LegacyDTLSDisabled   bool
-	DPDInterval          time.Duration
-	ReconnectTimeout     time.Duration
-	QueueLength          uint32
-	Logger               logger.ContextLogger
-	OnNetworkConfig      func(event NetworkConfigEvent) error
+	Server                         string
+	Protocol                       string
+	Cookie                         string
+	Username                       string
+	Password                       string
+	AuthGroup                      string
+	ReportedOS                     string
+	UserAgent                      string
+	Version                        string
+	LocalHostname                  string
+	FormEntries                    []FormEntry
+	Token                          *TokenConfig
+	ServerName                     string
+	CertificateAuthority           []byte
+	ClientCertificate              []byte
+	ClientKey                      []byte
+	ClientKeyPassword              string
+	PeerFingerprint                string
+	PeerFingerprints               []string
+	SystemTrustDisabled            bool
+	SkipCertVerify                 bool
+	HTTPKeepAliveDisabled          bool
+	XMLPostDisabled                bool
+	ExternalAuthDisabled           bool
+	PasswordAuthenticationDisabled bool
+	PFS                            bool
+	AllowInsecureCrypto            bool
+	MTU                            uint32
+	BaseMTU                        uint32
+	IPv6Disabled                   bool
+	Compression                    string
+	DTLSMode                       string
+	DTLSKeyExchange                string
+	LegacyDTLSDisabled             bool
+	DPDInterval                    time.Duration
+	ReconnectTimeout               time.Duration
+	QueueLength                    uint32
+	Logger                         logger.ContextLogger
+	OnNetworkConfig                func(event NetworkConfigEvent) error
 }
 
 // ValidateConfig validates configuration without opening a network connection.
@@ -105,7 +117,7 @@ func (c Config) validate(hasAuthProvider bool) error {
 		return invalidConfig("cookie contains an invalid character")
 	}
 	trustModes := 0
-	for _, configured := range []bool{len(c.CertificateAuthority) > 0, c.PeerFingerprint != "", c.SkipCertVerify} {
+	for _, configured := range []bool{len(c.CertificateAuthority) > 0, c.PeerFingerprint != "" || len(c.PeerFingerprints) > 0, c.SkipCertVerify} {
 		if configured {
 			trustModes++
 		}
@@ -115,6 +127,25 @@ func (c Config) validate(hasAuthProvider bool) error {
 	}
 	if strings.ContainsAny(c.ServerName, "\x00\r\n") {
 		return invalidConfig("server name contains an invalid character")
+	}
+	switch c.ReportedOS {
+	case "", "linux", "linux-64", "win", "mac-intel", "android", "apple-ios":
+	default:
+		return invalidConfig("reported OS must be linux, linux-64, win, mac-intel, android, or apple-ios")
+	}
+	for name, value := range map[string]string{
+		"user agent":     c.UserAgent,
+		"version":        c.Version,
+		"local hostname": c.LocalHostname,
+	} {
+		if strings.ContainsAny(value, "\x00\r\n") {
+			return invalidConfig(name + " contains an invalid character")
+		}
+	}
+	for _, fingerprint := range c.PeerFingerprints {
+		if strings.TrimSpace(fingerprint) == "" {
+			return invalidConfig("peer fingerprint list contains an empty value")
+		}
 	}
 	if (len(c.ClientCertificate) == 0) != (len(c.ClientKey) == 0) {
 		return invalidConfig("client certificate and key must be configured together")

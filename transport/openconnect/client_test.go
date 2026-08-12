@@ -125,10 +125,13 @@ func TestClientCookieCSTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	pinnedClient, err := NewClient(ctx, Config{
-		Server:          "https://" + gateway.ServerName() + ":" + port,
-		Cookie:          scenario.Cookie,
-		ServerName:      gateway.ServerName(),
-		PeerFingerprint: pin,
+		Server:     "https://" + gateway.ServerName() + ":" + port,
+		Cookie:     scenario.Cookie,
+		ServerName: gateway.ServerName(),
+		PeerFingerprints: []string{
+			"sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			pin,
+		},
 	}, new(recordingDialer), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -156,6 +159,9 @@ func TestClientRejectsInvalidConfigWithoutLeakingCookie(t *testing.T) {
 		{name: "invalid cookie", config: Config{Server: "https://vpn.example", Cookie: secret + "\n"}},
 		{name: "conflicting TLS trust", config: Config{Server: "https://vpn.example", Cookie: secret, CertificateAuthority: []byte("test CA"), PeerFingerprint: "sha256:0000"}},
 		{name: "invalid server name", config: Config{Server: "https://vpn.example", Cookie: secret, ServerName: "bad\nname"}},
+		{name: "invalid reported OS", config: Config{Server: "https://vpn.example", Cookie: secret, ReportedOS: "plan9"}},
+		{name: "invalid user agent", config: Config{Server: "https://vpn.example", Cookie: secret, UserAgent: "bad\r\nagent"}},
+		{name: "empty peer fingerprint", config: Config{Server: "https://vpn.example", Cookie: secret, PeerFingerprints: []string{""}}},
 		{name: "unbounded packet queue", config: Config{Server: "https://vpn.example", Cookie: secret, QueueLength: MaximumQueueLength + 1}},
 		{name: "unsupported protocol", config: Config{Server: "https://vpn.example", Protocol: "gp", Cookie: secret}},
 		{name: "invalid DTLS mode", config: Config{Server: "https://vpn.example", Cookie: secret, DTLSMode: "invalid"}},

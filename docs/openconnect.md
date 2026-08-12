@@ -17,8 +17,10 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
   only protocol currently supported. The former `type: anyconnect` spelling is
   intentionally not accepted.
 - `port` defaults to `443`.
-- `ca`, `peer-fingerprint`, and `skip-cert-verify` are mutually exclusive.
-  When none is configured, TLS verification uses the system CA roots.
+- `ca`, peer fingerprint(s), and `skip-cert-verify` are mutually exclusive.
+  `peer-fingerprints` accepts multiple pins for certificate rotation. System CA
+  roots remain enabled with a custom CA unless `system-trust-disabled: true`;
+  when no trust option is configured, verification uses the system roots.
 - `cert` and `key` must be configured together. Encrypted keys also require the
   matching `key-password`.
 - `dns` accepts IP literals only and requires `remote-dns-resolve: true`. This
@@ -44,13 +46,17 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
 - `legacy-dtls` defaults to `true`, matching OpenConnect compatibility behavior.
   Set it to `false` to prevent negotiation of Cisco DTLS 0.9 and its deprecated
   MD5/SHA-1/AES-CBC cryptography.
+- `pfs: true` rejects non-forward-secret TLS cipher suites.
+  `allow-insecure-crypto: true` enables legacy TLS and cipher compatibility and
+  should only be used for gateways that cannot negotiate modern cryptography.
 - YAML supports a pre-authenticated cookie, username/password, authgroup,
   static form entries, client certificates, and TOTP. HOTP is rejected from
   YAML because its counter needs a persistent programmatic callback.
 - Interactive forms, browser login, and host scan require an embedding
-  application to provide the corresponding policy callbacks. The standard
-  outbound does not open a browser. Host scan is disabled by default and is
-  never executed implicitly.
+  application to provide the corresponding policy callbacks. Without an
+  authentication provider, the standard outbound automatically disables
+  external authentication capability advertisement and does not open a
+  browser. Host scan is disabled by default and is never executed implicitly.
 
 Authentication values, cookies, private keys, token secrets, and form answers
 are removed from public events and errors. Do not enable packet captures or
