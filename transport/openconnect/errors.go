@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"context"
@@ -11,17 +11,17 @@ import (
 
 // ErrInvalidConfig identifies configuration failures that happen before any
 // gateway connection is attempted.
-var ErrInvalidConfig = errors.New("invalid anyconnect configuration")
+var ErrInvalidConfig = errors.New("invalid openconnect configuration")
 
 var (
-	ErrAuthRequired        = errors.New("anyconnect authentication provider is required")
-	ErrAuthRejected        = errors.New("anyconnect authentication was rejected")
-	ErrAuthProvider        = errors.New("anyconnect authentication provider failed")
-	ErrTLSRejected         = errors.New("anyconnect TLS verification failed")
-	ErrHostScanPolicy      = errors.New("anyconnect host scan is disabled by policy")
+	ErrAuthRequired        = errors.New("openconnect authentication provider is required")
+	ErrAuthRejected        = errors.New("openconnect authentication was rejected")
+	ErrAuthProvider        = errors.New("openconnect authentication provider failed")
+	ErrTLSRejected         = errors.New("openconnect TLS verification failed")
+	ErrHostScanPolicy      = errors.New("openconnect host scan is disabled by policy")
 	ErrDataChannelNotReady = openconnect.ErrDataChannelNotReady
 	ErrReconnectTimeout    = openconnect.ErrReconnectTimeout
-	ErrDTLSRequired        = errors.New("anyconnect DTLS is required but unavailable")
+	ErrDTLSRequired        = errors.New("openconnect DTLS is required but unavailable")
 )
 
 func invalidConfig(message string) error {

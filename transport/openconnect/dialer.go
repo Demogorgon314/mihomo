@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"context"
@@ -32,7 +32,7 @@ func (d *singDialer) DialContext(ctx context.Context, network string, destinatio
 
 func (d *singDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	if !destination.Addr.IsValid() {
-		return nil, errors.New("anyconnect UDP destination must be resolved")
+		return nil, errors.New("openconnect UDP destination must be resolved")
 	}
 	return d.dialer.ListenPacket(ctx, "udp", destination.String(), destination.AddrPort())
 }
