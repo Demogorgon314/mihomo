@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/sagernet/sing/common/logger"
 )
 
 const (
@@ -65,6 +67,7 @@ type Config struct {
 	DPDInterval          time.Duration
 	ReconnectTimeout     time.Duration
 	QueueLength          uint32
+	Logger               logger.ContextLogger
 	OnNetworkConfig      func(event NetworkConfigEvent) error
 }
 

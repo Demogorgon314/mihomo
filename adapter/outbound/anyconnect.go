@@ -148,6 +148,7 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 		DTLSMode:             option.DTLSMode,
 		DTLSKeyExchange:      option.DTLSKeyExchange,
 		LegacyDTLS:           option.LegacyDTLS,
+		Logger:               log.SingLogger,
 	}
 	if option.TokenMode != "" || option.TokenSecret != "" || option.TokenCounter != 0 || option.TokenCounterUpdate != nil {
 		config.Token = &ac.TokenConfig{

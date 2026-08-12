@@ -3,15 +3,59 @@ package anyconnect
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
 	openconnect "github.com/sagernet/sing-openconnect"
+	"github.com/sagernet/sing/common/logger"
 )
+
+type dtlsRecordingLogger struct {
+	logger.ContextLogger
+	entries chan string
+}
+
+func newDTLSRecordingLogger() *dtlsRecordingLogger {
+	return &dtlsRecordingLogger{
+		ContextLogger: logger.NOP(),
+		entries:       make(chan string, 16),
+	}
+}
+
+func (l *dtlsRecordingLogger) InfoContext(_ context.Context, args ...any) {
+	l.record(args...)
+}
+
+func (l *dtlsRecordingLogger) WarnContext(_ context.Context, args ...any) {
+	l.record(args...)
+}
+
+func (l *dtlsRecordingLogger) record(args ...any) {
+	select {
+	case l.entries <- fmt.Sprint(args...):
+	default:
+	}
+}
+
+func (l *dtlsRecordingLogger) waitContains(t testing.TB, ctx context.Context, expected string) {
+	t.Helper()
+	for {
+		select {
+		case entry := <-l.entries:
+			if strings.Contains(entry, expected) {
+				return
+			}
+		case <-ctx.Done():
+			t.Fatalf("did not observe log containing %q: %v", expected, ctx.Err())
+		}
+	}
+}
 
 type dtlsTestDialer struct {
 	recordingDialer
@@ -182,7 +226,8 @@ func TestClientDTLSModesAndFallback(t *testing.T) {
 	})
 
 	t.Run("auto fallback", func(t *testing.T) {
-		client, gateway, _, ctx := newDTLSTestClient(t, DTLSModeAuto, false, "")
+		testLogger := newDTLSRecordingLogger()
+		client, gateway, _, ctx := newDTLSTestClientWithLogger(t, DTLSModeAuto, false, "", testLogger)
 		defer func() { _ = client.Close() }()
 		defer func() { _ = gateway.Close() }()
 		configuration, err := client.WaitReady(ctx)
@@ -204,7 +249,10 @@ func TestClientDTLSModesAndFallback(t *testing.T) {
 			t.Fatal("fake gateway did not have one active DTLS connection")
 		}
 		waitForTransportEvent(t, ctx, client, "cstp")
+		testLogger.waitContains(t, ctx, "CSTP remains active")
 		exchangeFacadeICMP(t, ctx, client, "cstp-fallback")
+		waitForTransportEvent(t, ctx, client, "dtls")
+		testLogger.waitContains(t, ctx, "DTLS restored")
 	})
 
 	t.Run("require initial failure", func(t *testing.T) {
@@ -425,12 +473,16 @@ func TestClientLegacyDTLSSecurityFaults(t *testing.T) {
 }
 
 func newDTLSTestClient(t testing.TB, mode string, failUDP bool, fault string) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
+	return newDTLSTestClientWithLogger(t, mode, failUDP, fault, nil)
+}
+
+func newDTLSTestClientWithLogger(t testing.TB, mode string, failUDP bool, fault string, clientLogger logger.ContextLogger) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
 	t.Helper()
 	scenario := testanyconnect.BasicCSTPScenario()
 	scenario.ModernDTLS = true
 	scenario.DTLSMTU = 1200
 	scenario.DTLSAppID = []byte("mihomo-dtls-app")
-	return newDTLSTestClientForScenario(t, scenario, mode, failUDP, fault)
+	return newDTLSTestClientForScenarioWithLegacyTimeout(t, scenario, mode, failUDP, fault, scenario.LegacyDTLS, 8*time.Second, clientLogger)
 }
 
 func newDTLSTestClientForScenario(t testing.TB, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
@@ -438,10 +490,10 @@ func newDTLSTestClientForScenario(t testing.TB, scenario testanyconnect.Scenario
 }
 
 func newDTLSTestClientForScenarioWithLegacy(t testing.TB, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string, legacyDTLS bool) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
-	return newDTLSTestClientForScenarioWithLegacyTimeout(t, scenario, mode, failUDP, fault, legacyDTLS, 8*time.Second)
+	return newDTLSTestClientForScenarioWithLegacyTimeout(t, scenario, mode, failUDP, fault, legacyDTLS, 8*time.Second, nil)
 }
 
-func newDTLSTestClientForScenarioWithLegacyTimeout(t testing.TB, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string, legacyDTLS bool, timeout time.Duration) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
+func newDTLSTestClientForScenarioWithLegacyTimeout(t testing.TB, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string, legacyDTLS bool, timeout time.Duration, testLogger ...logger.ContextLogger) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	t.Cleanup(cancel)
@@ -462,6 +514,10 @@ func newDTLSTestClientForScenarioWithLegacyTimeout(t testing.TB, scenario testan
 	if scenario.InjectedDTLS {
 		dtlsKeyExchange = DTLSKeyExchangeResumption
 	}
+	var clientLogger logger.ContextLogger
+	if len(testLogger) > 0 {
+		clientLogger = testLogger[0]
+	}
 	client, err := NewClient(ctx, Config{
 		Server:               "https://" + gateway.ServerName() + ":" + port,
 		Cookie:               scenario.Cookie,
@@ -470,6 +526,7 @@ func newDTLSTestClientForScenarioWithLegacyTimeout(t testing.TB, scenario testan
 		DTLSMode:             mode,
 		DTLSKeyExchange:      dtlsKeyExchange,
 		LegacyDTLS:           legacyDTLS,
+		Logger:               clientLogger,
 	}, dialer, nil)
 	if err != nil {
 		t.Fatal(err)
