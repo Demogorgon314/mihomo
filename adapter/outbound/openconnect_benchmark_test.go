@@ -17,10 +17,10 @@ import (
 
 	C "github.com/metacubex/mihomo/constant"
 	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
-	ac "github.com/metacubex/mihomo/transport/anyconnect"
+	oc "github.com/metacubex/mihomo/transport/openconnect"
 )
 
-const anyConnectE2EBenchmarkMagic = 0x41434e42
+const openConnectE2EBenchmarkMagic = 0x41434e42
 
 // BenchmarkAnyConnectDataPlaneE2E is the final performance and correctness
 // gate. It uses the local fake gateway, real Pion DTLS, sing-openconnect, and
@@ -190,7 +190,7 @@ func BenchmarkAnyConnectTCPDownloadE2E(b *testing.B) {
 	}
 }
 
-type anyConnectTCPDownloadPeer struct {
+type openConnectTCPDownloadPeer struct {
 	access           sync.Mutex
 	address          netip.Addr
 	port             uint16
@@ -205,8 +205,8 @@ type anyConnectTCPDownloadPeer struct {
 	established      bool
 }
 
-func newAnyConnectTCPDownloadPeer(address netip.Addr, port uint16, segmentSize int, segmentsPerBlock int, block []byte) *anyConnectTCPDownloadPeer {
-	return &anyConnectTCPDownloadPeer{
+func newAnyConnectTCPDownloadPeer(address netip.Addr, port uint16, segmentSize int, segmentsPerBlock int, block []byte) *openConnectTCPDownloadPeer {
+	return &openConnectTCPDownloadPeer{
 		address:          address,
 		port:             port,
 		segmentSize:      segmentSize,
@@ -216,7 +216,7 @@ func newAnyConnectTCPDownloadPeer(address netip.Addr, port uint16, segmentSize i
 	}
 }
 
-func (p *anyConnectTCPDownloadPeer) HandlePacket(packet []byte) ([]byte, error) {
+func (p *openConnectTCPDownloadPeer) HandlePacket(packet []byte) ([]byte, error) {
 	replies, err := p.HandlePackets(packet)
 	if err != nil || len(replies) == 0 {
 		return nil, err
@@ -224,7 +224,7 @@ func (p *anyConnectTCPDownloadPeer) HandlePacket(packet []byte) ([]byte, error) 
 	return replies[0], nil
 }
 
-func (p *anyConnectTCPDownloadPeer) HandlePackets(packet []byte) ([][]byte, error) {
+func (p *openConnectTCPDownloadPeer) HandlePackets(packet []byte) ([][]byte, error) {
 	if len(packet) < 40 || packet[0]>>4 != 4 || packet[9] != 6 {
 		return nil, fmt.Errorf("download peer received a non-TCP IPv4 packet")
 	}
@@ -289,7 +289,7 @@ func (p *anyConnectTCPDownloadPeer) HandlePackets(packet []byte) ([][]byte, erro
 	return replies, nil
 }
 
-func (p *anyConnectTCPDownloadPeer) buildPacket(sequence uint32, acknowledgement uint32, flags byte, payload []byte) []byte {
+func (p *openConnectTCPDownloadPeer) buildPacket(sequence uint32, acknowledgement uint32, flags byte, payload []byte) []byte {
 	packet := make([]byte, 40+len(payload))
 	packet[0] = 0x45
 	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
@@ -298,7 +298,7 @@ func (p *anyConnectTCPDownloadPeer) buildPacket(sequence uint32, acknowledgement
 	serverAddress := p.address.As4()
 	copy(packet[12:16], serverAddress[:])
 	copy(packet[16:20], p.clientAddress[:])
-	binary.BigEndian.PutUint16(packet[10:12], anyConnectBenchmarkChecksum(packet[:20]))
+	binary.BigEndian.PutUint16(packet[10:12], openConnectBenchmarkChecksum(packet[:20]))
 	tcpPacket := packet[20:]
 	binary.BigEndian.PutUint16(tcpPacket[0:2], p.port)
 	binary.BigEndian.PutUint16(tcpPacket[2:4], p.clientPort)
@@ -308,21 +308,21 @@ func (p *anyConnectTCPDownloadPeer) buildPacket(sequence uint32, acknowledgement
 	tcpPacket[13] = flags
 	binary.BigEndian.PutUint16(tcpPacket[14:16], 65535)
 	copy(tcpPacket[20:], payload)
-	binary.BigEndian.PutUint16(tcpPacket[16:18], anyConnectBenchmarkTCPChecksum(packet[12:16], packet[16:20], tcpPacket))
+	binary.BigEndian.PutUint16(tcpPacket[16:18], openConnectBenchmarkTCPChecksum(packet[12:16], packet[16:20], tcpPacket))
 	return packet
 }
 
-func anyConnectBenchmarkTCPChecksum(source []byte, destination []byte, tcpPacket []byte) uint16 {
+func openConnectBenchmarkTCPChecksum(source []byte, destination []byte, tcpPacket []byte) uint16 {
 	pseudoHeader := make([]byte, 12+len(tcpPacket))
 	copy(pseudoHeader[0:4], source)
 	copy(pseudoHeader[4:8], destination)
 	pseudoHeader[9] = 6
 	binary.BigEndian.PutUint16(pseudoHeader[10:12], uint16(len(tcpPacket)))
 	copy(pseudoHeader[12:], tcpPacket)
-	return anyConnectBenchmarkChecksum(pseudoHeader)
+	return openConnectBenchmarkChecksum(pseudoHeader)
 }
 
-func anyConnectBenchmarkChecksum(content []byte) uint16 {
+func openConnectBenchmarkChecksum(content []byte) uint16 {
 	var sum uint32
 	for len(content) >= 2 {
 		sum += uint32(binary.BigEndian.Uint16(content[:2]))
@@ -356,15 +356,15 @@ func waitAnyConnectBenchmarkRecordCount(ctx context.Context, recorder *testanyco
 	}
 }
 
-type anyConnectSingleReplyPeer struct {
+type openConnectSingleReplyPeer struct {
 	peer *testanyconnect.IPv4TCPUDPEchoPeer
 }
 
-func (p anyConnectSingleReplyPeer) HandlePacket(packet []byte) ([]byte, error) {
+func (p openConnectSingleReplyPeer) HandlePacket(packet []byte) ([]byte, error) {
 	return p.peer.HandlePacket(packet)
 }
 
-func startAnyConnectE2EBenchmark(b *testing.B) (context.Context, *AnyConnect, *anyConnectSession, *testanyconnect.Recorder, netip.Addr) {
+func startAnyConnectE2EBenchmark(b *testing.B) (context.Context, *OpenConnect, *openConnectSession, *testanyconnect.Recorder, netip.Addr) {
 	b.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	b.Cleanup(cancel)
@@ -374,11 +374,11 @@ func startAnyConnectE2EBenchmark(b *testing.B) (context.Context, *AnyConnect, *a
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = peer.Close() })
-	outbound, session, recorder := startAnyConnectE2EBenchmarkTunnel(b, ctx, anyConnectSingleReplyPeer{peer: peer})
+	outbound, session, recorder := startAnyConnectE2EBenchmarkTunnel(b, ctx, openConnectSingleReplyPeer{peer: peer})
 	return ctx, outbound, session, recorder, peerAddress
 }
 
-func startAnyConnectE2EBenchmarkTunnel(b *testing.B, ctx context.Context, peer testanyconnect.PacketPeer) (*AnyConnect, *anyConnectSession, *testanyconnect.Recorder) {
+func startAnyConnectE2EBenchmarkTunnel(b *testing.B, ctx context.Context, peer testanyconnect.PacketPeer) (*OpenConnect, *openConnectSession, *testanyconnect.Recorder) {
 	b.Helper()
 	scenario := testanyconnect.BasicCSTPScenario()
 	scenario.ModernDTLS = true
@@ -388,8 +388,8 @@ func startAnyConnectE2EBenchmarkTunnel(b *testing.B, ctx context.Context, peer t
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = gateway.Close() })
-	outbound := newFakeAnyConnectOutboundWithOption(b, gateway, scenario, new(anyConnectRecordingDialer), 0, func(option *AnyConnectOption) {
-		option.DTLSMode = ac.DTLSModeRequire
+	outbound := newFakeAnyConnectOutboundWithOption(b, gateway, scenario, new(openConnectRecordingDialer), 0, func(option *OpenConnectOption) {
+		option.DTLSMode = oc.DTLSModeRequire
 		option.DPDInterval = 30
 	})
 	b.Cleanup(func() { _ = outbound.Close() })
@@ -405,7 +405,7 @@ func newAnyConnectE2EBenchmarkPacket(size int) []byte {
 		panic("AnyConnect benchmark packet must be at least 24 bytes")
 	}
 	packet := make([]byte, size)
-	binary.BigEndian.PutUint32(packet[0:4], anyConnectE2EBenchmarkMagic)
+	binary.BigEndian.PutUint32(packet[0:4], openConnectE2EBenchmarkMagic)
 	binary.BigEndian.PutUint32(packet[4:8], uint32(size))
 	for index := 24; index < len(packet); index++ {
 		packet[index] = byte(index*31 + 17)
@@ -419,7 +419,7 @@ func setAnyConnectE2EBenchmarkSequence(packet []byte, sequence uint64) {
 }
 
 func validateAnyConnectE2EBenchmarkPacket(packet []byte) (uint64, error) {
-	if len(packet) < 24 || binary.BigEndian.Uint32(packet[0:4]) != anyConnectE2EBenchmarkMagic {
+	if len(packet) < 24 || binary.BigEndian.Uint32(packet[0:4]) != openConnectE2EBenchmarkMagic {
 		return 0, fmt.Errorf("invalid E2E benchmark packet header")
 	}
 	if int(binary.BigEndian.Uint32(packet[4:8])) != len(packet) {

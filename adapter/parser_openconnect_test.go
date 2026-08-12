@@ -8,10 +8,11 @@ import (
 	C "github.com/metacubex/mihomo/constant"
 )
 
-func TestParseAnyConnect(t *testing.T) {
+func TestParseOpenConnect(t *testing.T) {
 	proxy, err := ParseProxy(map[string]any{
 		"name":              "vpn",
-		"type":              "anyconnect",
+		"type":              "openconnect",
+		"protocol":          "anyconnect",
 		"server":            "vpn.example.com",
 		"port":              443,
 		"cookie":            "test-cookie",
@@ -22,13 +23,13 @@ func TestParseAnyConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = proxy.Close() }()
-	if proxy.Type() != C.AnyConnect || proxy.Name() != "vpn" || !proxy.SupportUDP() {
+	if proxy.Type() != C.OpenConnect || proxy.Name() != "vpn" || !proxy.SupportUDP() {
 		t.Fatalf("unexpected parsed proxy: type=%s name=%q udp=%v", proxy.Type(), proxy.Name(), proxy.SupportUDP())
 	}
 }
 
-func TestNewAnyConnectAcceptsIPv6Gateway(t *testing.T) {
-	proxy, err := outbound.NewAnyConnect(outbound.AnyConnectOption{
+func TestNewOpenConnectAcceptsIPv6Gateway(t *testing.T) {
+	proxy, err := outbound.NewOpenConnect(outbound.OpenConnectOption{
 		Name:   "ipv6-vpn",
 		Server: "2001:db8::1",
 		Port:   443,
@@ -43,7 +44,7 @@ func TestNewAnyConnectAcceptsIPv6Gateway(t *testing.T) {
 	}
 }
 
-func TestParseAnyConnectRejectsInvalidOptions(t *testing.T) {
+func TestParseOpenConnectRejectsInvalidOptions(t *testing.T) {
 	secret := "parser-secret-cookie"
 	for _, testCase := range []struct {
 		name   string
@@ -74,6 +75,7 @@ func TestParseAnyConnectRejectsInvalidOptions(t *testing.T) {
 			mapping["token-secret"] = "AA"
 		}},
 		{name: "invalid DTLS mode", change: func(mapping map[string]any) { mapping["dtls-mode"] = "invalid" }},
+		{name: "unsupported protocol", change: func(mapping map[string]any) { mapping["protocol"] = "gp" }},
 		{name: "invalid DTLS key exchange", change: func(mapping map[string]any) { mapping["dtls-key-exchange"] = "invalid" }},
 		{name: "legacy DTLS while disabled", change: func(mapping map[string]any) {
 			mapping["dtls-mode"] = "off"
@@ -99,7 +101,7 @@ func TestParseAnyConnectRejectsInvalidOptions(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			mapping := map[string]any{
 				"name":   "vpn",
-				"type":   "anyconnect",
+				"type":   "openconnect",
 				"server": "vpn.example.com",
 				"port":   443,
 				"cookie": secret,

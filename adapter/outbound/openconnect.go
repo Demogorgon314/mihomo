@@ -16,17 +16,17 @@ import (
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/log"
-	ac "github.com/metacubex/mihomo/transport/anyconnect"
+	oc "github.com/metacubex/mihomo/transport/openconnect"
 
 	M "github.com/metacubex/sing/common/metadata"
 )
 
-const defaultAnyConnectHandshakeTimeout = 30 * time.Second
+const defaultOpenConnectHandshakeTimeout = 30 * time.Second
 
-type AnyConnect struct {
+type OpenConnect struct {
 	*Base
-	option AnyConnectOption
-	config ac.Config
+	option OpenConnectOption
+	config oc.Config
 	dns    []dns.NameServer
 
 	runCtx    context.Context
@@ -34,7 +34,7 @@ type AnyConnect struct {
 
 	access     sync.Mutex
 	starting   chan struct{}
-	session    *anyConnectSession
+	session    *openConnectSession
 	startupErr error
 	closed     bool
 	closeOnce  sync.Once
@@ -42,16 +42,17 @@ type AnyConnect struct {
 	closeErr   error
 }
 
-type AnyConnectOption struct {
+type OpenConnectOption struct {
 	BasicOption
 	Name             string         `proxy:"name"`
+	Protocol         string         `proxy:"protocol,omitempty"`
 	Server           string         `proxy:"server"`
 	Port             int            `proxy:"port"`
 	Cookie           string         `proxy:"cookie,omitempty"`
 	Username         string         `proxy:"username,omitempty"`
 	Password         string         `proxy:"password,omitempty"`
 	AuthGroup        string         `proxy:"authgroup,omitempty"`
-	FormEntries      []ac.FormEntry `proxy:"form-entries,omitempty"`
+	FormEntries      []oc.FormEntry `proxy:"form-entries,omitempty"`
 	CA               string         `proxy:"ca,omitempty"`
 	Cert             string         `proxy:"cert,omitempty"`
 	Key              string         `proxy:"key,omitempty"`
@@ -76,56 +77,57 @@ type AnyConnectOption struct {
 	DTLSKeyExchange  string         `proxy:"dtls-key-exchange,omitempty"`
 	LegacyDTLS       bool           `proxy:"legacy-dtls,omitempty"`
 
-	AuthProvider       ac.AuthProvider                     `proxy:"-"`
+	AuthProvider       oc.AuthProvider                     `proxy:"-"`
 	TokenCounterUpdate func(context.Context, uint64) error `proxy:"-"`
 }
 
-func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
+func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 	if strings.TrimSpace(option.Name) == "" {
-		return nil, errors.New("anyconnect name is required")
+		return nil, errors.New("openconnect name is required")
 	}
-	if err := validateAnyConnectServer(option.Server); err != nil {
+	if err := validateOpenConnectServer(option.Server); err != nil {
 		return nil, err
 	}
 	if option.Port < 1 || option.Port > 65535 {
-		return nil, errors.New("anyconnect port must be between 1 and 65535")
+		return nil, errors.New("openconnect port must be between 1 and 65535")
 	}
 	if strings.ContainsAny(option.Cookie, "\x00\r\n") {
-		return nil, errors.New("anyconnect cookie contains an invalid character")
+		return nil, errors.New("openconnect cookie contains an invalid character")
 	}
 	if option.HandshakeTimeout < 0 {
-		return nil, errors.New("anyconnect handshake timeout must be non-negative")
+		return nil, errors.New("openconnect handshake timeout must be non-negative")
 	}
 	if option.MTU != 0 && (option.MTU < 576 || option.MTU > 65535) {
-		return nil, errors.New("anyconnect MTU must be between 576 and 65535")
+		return nil, errors.New("openconnect MTU must be between 576 and 65535")
 	}
 	if option.IPv6 && option.MTU != 0 && option.MTU < 1280 {
-		return nil, errors.New("anyconnect IPv6 MTU must be at least 1280")
+		return nil, errors.New("openconnect IPv6 MTU must be at least 1280")
 	}
 	if option.BaseMTU != 0 && (option.BaseMTU < 576 || option.BaseMTU > 65535) {
-		return nil, errors.New("anyconnect base MTU must be between 576 and 65535")
+		return nil, errors.New("openconnect base MTU must be between 576 and 65535")
 	}
 	if option.DPDInterval < 0 {
-		return nil, errors.New("anyconnect DPD interval must be non-negative")
+		return nil, errors.New("openconnect DPD interval must be non-negative")
 	}
 	if option.ReconnectTimeout < 0 {
-		return nil, errors.New("anyconnect reconnect timeout must be non-negative")
+		return nil, errors.New("openconnect reconnect timeout must be non-negative")
 	}
-	if option.QueueLength > ac.MaximumQueueLength {
-		return nil, fmt.Errorf("anyconnect packet queue length must not exceed %d", ac.MaximumQueueLength)
+	if option.QueueLength > oc.MaximumQueueLength {
+		return nil, fmt.Errorf("openconnect packet queue length must not exceed %d", oc.MaximumQueueLength)
 	}
 	if len(option.Dns) > 0 && !option.RemoteDnsResolve {
-		return nil, errors.New("anyconnect DNS override requires remote-dns-resolve")
+		return nil, errors.New("openconnect DNS override requires remote-dns-resolve")
 	}
-	if option.DTLSMode != "" && option.DTLSMode != ac.DTLSModeOff && option.DTLSMode != ac.DTLSModeAuto && option.DTLSMode != ac.DTLSModeRequire {
-		return nil, fmt.Errorf("unsupported anyconnect DTLS mode %q; expected off, auto, or require", option.DTLSMode)
+	if option.DTLSMode != "" && option.DTLSMode != oc.DTLSModeOff && option.DTLSMode != oc.DTLSModeAuto && option.DTLSMode != oc.DTLSModeRequire {
+		return nil, fmt.Errorf("unsupported openconnect DTLS mode %q; expected off, auto, or require", option.DTLSMode)
 	}
-	if option.LegacyDTLS && option.DTLSMode == ac.DTLSModeOff {
-		return nil, errors.New("anyconnect legacy DTLS requires DTLS mode auto or require")
+	if option.LegacyDTLS && option.DTLSMode == oc.DTLSModeOff {
+		return nil, errors.New("openconnect legacy DTLS requires DTLS mode auto or require")
 	}
 	address := net.JoinHostPort(option.Server, fmt.Sprint(option.Port))
-	config := ac.Config{
+	config := oc.Config{
 		Server:               "https://" + address,
+		Protocol:             option.Protocol,
 		Cookie:               option.Cookie,
 		Username:             option.Username,
 		Password:             option.Password,
@@ -151,25 +153,25 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 		Logger:               log.SingLogger,
 	}
 	if option.TokenMode != "" || option.TokenSecret != "" || option.TokenCounter != 0 || option.TokenCounterUpdate != nil {
-		config.Token = &ac.TokenConfig{
+		config.Token = &oc.TokenConfig{
 			Mode:          option.TokenMode,
 			Secret:        option.TokenSecret,
 			Counter:       option.TokenCounter,
 			UpdateCounter: option.TokenCounterUpdate,
 		}
 	}
-	if err := ac.ValidateConfig(config, option.AuthProvider); err != nil {
+	if err := oc.ValidateConfig(config, option.AuthProvider); err != nil {
 		return nil, err
 	}
 	if option.LegacyDTLS {
-		log.Warnln("[AnyConnect](%s) legacy DTLS 0.9 enables deprecated MD5/SHA-1 handshake and AES-CBC record protection", option.Name)
+		log.Warnln("[OpenConnect](%s) legacy AnyConnect DTLS 0.9 enables deprecated MD5/SHA-1 handshake and AES-CBC record protection", option.Name)
 	}
 	runCtx, runCancel := context.WithCancel(context.Background())
-	outbound := &AnyConnect{
+	outbound := &OpenConnect{
 		Base: NewBase(BaseOption{
 			Name:         option.Name,
 			Addr:         address,
-			Type:         C.AnyConnect,
+			Type:         C.OpenConnect,
 			ProviderName: option.ProviderName,
 			UDP:          true,
 			TFO:          option.TFO,
@@ -185,7 +187,7 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 		config:    config,
 	}
 	if option.RemoteDnsResolve && len(option.Dns) > 0 {
-		parsedDNS, err := parseAnyConnectNameServers(option.Dns)
+		parsedDNS, err := parseOpenConnectNameServers(option.Dns)
 		if err != nil {
 			runCancel()
 			return nil, err
@@ -196,36 +198,36 @@ func NewAnyConnect(option AnyConnectOption) (*AnyConnect, error) {
 	return outbound, nil
 }
 
-func parseAnyConnectNameServers(servers []string) ([]dns.NameServer, error) {
+func parseOpenConnectNameServers(servers []string) ([]dns.NameServer, error) {
 	result := make([]dns.NameServer, 0, len(servers))
 	for _, server := range servers {
 		address, err := netip.ParseAddr(server)
 		if err != nil {
-			return nil, fmt.Errorf("anyconnect DNS override must be an IP address: %q", server)
+			return nil, fmt.Errorf("openconnect DNS override must be an IP address: %q", server)
 		}
 		result = append(result, dns.NameServer{Addr: net.JoinHostPort(address.String(), "53")})
 	}
 	return result, nil
 }
 
-func validateAnyConnectServer(server string) error {
+func validateOpenConnectServer(server string) error {
 	if strings.TrimSpace(server) == "" {
-		return errors.New("anyconnect server is required")
+		return errors.New("openconnect server is required")
 	}
 	if address, err := netip.ParseAddr(server); err == nil && address.IsValid() {
 		return nil
 	}
 	parsed, err := url.Parse("https://" + server)
 	if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.EscapedPath() != "" {
-		return errors.New("anyconnect server must be a hostname or IP address")
+		return errors.New("openconnect server must be a hostname or IP address")
 	}
 	if parsed.Port() != "" {
-		return errors.New("anyconnect server must not include a port")
+		return errors.New("openconnect server must not include a port")
 	}
 	return nil
 }
 
-func (o *AnyConnect) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
+func (o *OpenConnect) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
 	session, err := o.run(ctx)
 	if err != nil {
 		return nil, err
@@ -249,12 +251,12 @@ func (o *AnyConnect) DialContext(ctx context.Context, metadata *C.Metadata) (C.C
 		return nil, err
 	}
 	if connection == nil {
-		return nil, errors.New("anyconnect connection is nil")
+		return nil, errors.New("openconnect connection is nil")
 	}
 	return NewConn(connection, o), nil
 }
 
-func (o *AnyConnect) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (C.PacketConn, error) {
+func (o *OpenConnect) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (C.PacketConn, error) {
 	session, err := o.run(ctx)
 	if err != nil {
 		return nil, err
@@ -271,12 +273,12 @@ func (o *AnyConnect) ListenPacketContext(ctx context.Context, metadata *C.Metada
 		return nil, err
 	}
 	if packetConn == nil {
-		return nil, errors.New("anyconnect packet connection is nil")
+		return nil, errors.New("openconnect packet connection is nil")
 	}
 	return NewPacketConn(packetConn, o), nil
 }
 
-func (o *AnyConnect) ResolveUDP(ctx context.Context, metadata *C.Metadata) error {
+func (o *OpenConnect) ResolveUDP(ctx context.Context, metadata *C.Metadata) error {
 	session, err := o.run(ctx)
 	if err != nil {
 		return err
@@ -288,7 +290,7 @@ func (o *AnyConnect) ResolveUDP(ctx context.Context, metadata *C.Metadata) error
 	return o.resolveUDP(ctx, metadata, remoteResolver)
 }
 
-func (o *AnyConnect) resolveUDP(ctx context.Context, metadata *C.Metadata, remoteResolver resolver.Resolver) error {
+func (o *OpenConnect) resolveUDP(ctx context.Context, metadata *C.Metadata, remoteResolver resolver.Resolver) error {
 	if (!metadata.Resolved() || remoteResolver != nil) && metadata.Host != "" {
 		if remoteResolver == nil {
 			remoteResolver = resolver.DefaultResolver
@@ -302,7 +304,7 @@ func (o *AnyConnect) resolveUDP(ctx context.Context, metadata *C.Metadata, remot
 	return nil
 }
 
-func (o *AnyConnect) resolverForConfig(configuration ac.NetworkConfig) (resolver.Resolver, error) {
+func (o *OpenConnect) resolverForConfig(configuration oc.NetworkConfig) (resolver.Resolver, error) {
 	if !o.option.RemoteDnsResolve {
 		return nil, nil
 	}
@@ -313,7 +315,7 @@ func (o *AnyConnect) resolverForConfig(configuration ac.NetworkConfig) (resolver
 		}
 	}
 	if len(nameservers) == 0 {
-		return nil, errors.New("AnyConnect server did not provide a DNS server")
+		return nil, errors.New("OpenConnect server did not provide a DNS server")
 	}
 	for index := range nameservers {
 		nameservers[index].ProxyAdapter = o
@@ -321,7 +323,7 @@ func (o *AnyConnect) resolverForConfig(configuration ac.NetworkConfig) (resolver
 	return dns.NewResolver(dns.Config{Main: nameservers, IPv6: networkConfigHasIPv6(configuration)}).Resolver, nil
 }
 
-func networkConfigHasIPv6(configuration ac.NetworkConfig) bool {
+func networkConfigHasIPv6(configuration oc.NetworkConfig) bool {
 	for _, prefix := range configuration.Addresses {
 		if prefix.Addr().Is6() {
 			return true
@@ -330,17 +332,17 @@ func networkConfigHasIPv6(configuration ac.NetworkConfig) bool {
 	return false
 }
 
-func (o *AnyConnect) ProxyInfo() C.ProxyInfo {
+func (o *OpenConnect) ProxyInfo() C.ProxyInfo {
 	info := o.Base.ProxyInfo()
 	info.DialerProxy = o.option.DialerProxy
 	return info
 }
 
-func (o *AnyConnect) IsL3Protocol(*C.Metadata) bool {
+func (o *OpenConnect) IsL3Protocol(*C.Metadata) bool {
 	return true
 }
 
-func (o *AnyConnect) Close() error {
+func (o *OpenConnect) Close() error {
 	o.closeOnce.Do(func() {
 		o.access.Lock()
 		o.closed = true
@@ -363,7 +365,7 @@ func (o *AnyConnect) Close() error {
 	return o.closeErr
 }
 
-func (o *AnyConnect) run(ctx context.Context) (*anyConnectSession, error) {
+func (o *OpenConnect) run(ctx context.Context) (*openConnectSession, error) {
 	for {
 		o.access.Lock()
 		if o.closed {
@@ -400,8 +402,8 @@ func (o *AnyConnect) run(ctx context.Context) (*anyConnectSession, error) {
 	}
 }
 
-func (o *AnyConnect) start(starting chan struct{}) {
-	timeout := defaultAnyConnectHandshakeTimeout
+func (o *OpenConnect) start(starting chan struct{}) {
+	timeout := defaultOpenConnectHandshakeTimeout
 	if o.option.HandshakeTimeout > 0 {
 		timeout = time.Duration(o.option.HandshakeTimeout) * time.Second
 	}
