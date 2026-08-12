@@ -338,6 +338,11 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 	if request.Method != http.MethodConnect || request.URL.Path != "/CSCOSSLC/tunnel" {
 		return fmt.Errorf("unexpected CSTP request: %s %s", request.Method, request.URL.Path)
 	}
+	for name, expected := range g.scenario.CSTP.ExpectedRequestHeaders {
+		if actual := request.Header.Get(name); actual != expected {
+			return fmt.Errorf("unexpected CSTP %s header: got %q, expected %q", name, actual, expected)
+		}
+	}
 	cookie, cookieErr := request.Cookie("webvpn")
 	if cookieErr != nil || !g.consumeTunnelCookie(cookie.Value) {
 		g.record("cstp-auth", "rejected CONNECT cookie")

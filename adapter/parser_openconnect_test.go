@@ -10,15 +10,20 @@ import (
 
 func TestParseOpenConnect(t *testing.T) {
 	proxy, err := ParseProxy(map[string]any{
-		"name":                             "vpn",
-		"type":                             "openconnect",
-		"protocol":                         "anyconnect",
-		"server":                           "vpn.example.com",
-		"cookie":                           "test-cookie",
-		"reported-os":                      "linux-64",
-		"user-agent":                       "OpenConnect test agent",
-		"version":                          "9.21",
-		"local-hostname":                   "test-client",
+		"name":           "vpn",
+		"type":           "openconnect",
+		"protocol":       "anyconnect",
+		"server":         "vpn.example.com",
+		"cookie":         "test-cookie",
+		"reported-os":    "linux-64",
+		"user-agent":     "OpenConnect test agent",
+		"version":        "9.21",
+		"local-hostname": "test-client",
+		"mobile": map[string]any{
+			"platform-version": "14",
+			"device-type":      "android",
+			"device-unique-id": "test-device",
+		},
 		"peer-fingerprints":                []string{"sha256:0000000000000000000000000000000000000000000000000000000000000000"},
 		"system-trust-disabled":            true,
 		"http-keepalive-disabled":          true,
@@ -28,6 +33,7 @@ func TestParseOpenConnect(t *testing.T) {
 		"pfs":                              true,
 		"allow-insecure-crypto":            true,
 		"dtls-mode":                        "off",
+		"dtls-local-port":                  44444,
 		"legacy-dtls":                      false,
 		"handshake-timeout":                10,
 		"ipv6-disabled":                    true,
@@ -70,6 +76,9 @@ func TestParseOpenConnectRejectsInvalidOptions(t *testing.T) {
 		{name: "invalid cookie", change: func(mapping map[string]any) { mapping["cookie"] = secret + "\n" }},
 		{name: "invalid reported OS", change: func(mapping map[string]any) { mapping["reported-os"] = "plan9" }},
 		{name: "invalid user agent", change: func(mapping map[string]any) { mapping["user-agent"] = "bad\r\nagent" }},
+		{name: "incomplete mobile identity", change: func(mapping map[string]any) {
+			mapping["mobile"] = map[string]any{"platform-version": "14", "device-type": "android"}
+		}},
 		{name: "conflicting TLS trust", change: func(mapping map[string]any) {
 			mapping["ca"] = "test CA"
 			mapping["peer-fingerprint"] = "sha256:0000"
@@ -97,6 +106,10 @@ func TestParseOpenConnectRejectsInvalidOptions(t *testing.T) {
 		{name: "small base MTU", change: func(mapping map[string]any) { mapping["base-mtu"] = 575 }},
 		{name: "negative DPD interval", change: func(mapping map[string]any) { mapping["dpd-interval"] = -1 }},
 		{name: "negative reconnect timeout", change: func(mapping map[string]any) { mapping["reconnect-timeout"] = -1 }},
+		{name: "DTLS local port overflow", change: func(mapping map[string]any) { mapping["dtls-local-port"] = 65536 }},
+		{name: "promoted form value", change: func(mapping map[string]any) {
+			mapping["form-entries"] = []map[string]any{{"submission-key": "answer", "value": "value", "promote": true}}
+		}},
 		{name: "invalid compression", change: func(mapping map[string]any) { mapping["compression"] = "deflate" }},
 		{name: "unbounded packet queue", change: func(mapping map[string]any) { mapping["queue-length"] = 4097 }},
 		{name: "DNS override without remote resolve", change: func(mapping map[string]any) { mapping["dns"] = []string{"192.0.2.53"} }},
