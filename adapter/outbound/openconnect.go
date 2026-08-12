@@ -79,6 +79,9 @@ type OpenConnectOption struct {
 	AllowInsecureCrypto            bool             `proxy:"allow-insecure-crypto,omitempty"`
 	TokenMode                      string           `proxy:"token-mode,omitempty"`
 	TokenSecret                    string           `proxy:"token-secret,omitempty"`
+	TokenPIN                       string           `proxy:"token-pin,omitempty"`
+	TokenPassword                  string           `proxy:"token-password,omitempty"`
+	TokenDeviceID                  string           `proxy:"token-device-id,omitempty"`
 	TokenCounter                   uint64           `proxy:"token-counter,omitempty"`
 	HandshakeTimeout               int              `proxy:"handshake-timeout,omitempty"`
 	MTU                            int              `proxy:"mtu,omitempty"`
@@ -209,10 +212,13 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 		DTLSLocalPort:                    uint16(option.DTLSLocalPort),
 		Logger:                           log.SingLogger,
 	}
-	if option.TokenMode != "" || option.TokenSecret != "" || option.TokenCounter != 0 || option.TokenCounterUpdate != nil {
+	if option.TokenMode != "" || option.TokenSecret != "" || option.TokenPIN != "" || option.TokenPassword != "" || option.TokenDeviceID != "" || option.TokenCounter != 0 || option.TokenCounterUpdate != nil {
 		config.Token = &oc.TokenConfig{
 			Mode:          option.TokenMode,
 			Secret:        option.TokenSecret,
+			PIN:           option.TokenPIN,
+			Password:      option.TokenPassword,
+			DeviceID:      option.TokenDeviceID,
 			Counter:       option.TokenCounter,
 			UpdateCounter: option.TokenCounterUpdate,
 		}
