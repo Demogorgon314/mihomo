@@ -96,6 +96,47 @@ func TestClientExplicitSkipCertificateVerify(t *testing.T) {
 	}
 }
 
+func TestClientMCAIdentity(t *testing.T) {
+	password := "mca-key-password"
+	_, certificatePEM, encryptedKeyPEM := newClientCertificate(t, password, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	scenario := testanyconnect.BasicCSTPScenario()
+	client, gateway, cancel := newTLSScenarioClient(t, scenario, Config{
+		Cookie:         scenario.Cookie,
+		MCACertificate: certificatePEM,
+		MCAKey:         encryptedKeyPEM,
+		MCAKeyPassword: password,
+	})
+	defer cancel()
+	defer func() { _ = gateway.Close() }()
+	defer func() { _ = client.Close() }()
+	ctx, cancelWait := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelWait()
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	dialer := new(recordingDialer)
+	_, err := NewClient(context.Background(), Config{
+		Server:         "https://vpn.invalid",
+		Cookie:         "test-cookie",
+		MCACertificate: certificatePEM,
+		MCAKey:         encryptedKeyPEM,
+		MCAKeyPassword: "wrong-password",
+	}, dialer, nil)
+	if !errors.Is(err, ErrTLSRejected) || !IsTerminal(err) {
+		t.Fatalf("expected terminal MCA TLS rejection, got %v", err)
+	}
+	if containsBytes(err.Error(), encryptedKeyPEM) || strings.Contains(err.Error(), "wrong-password") {
+		t.Fatalf("MCA TLS error leaked private material: %v", err)
+	}
+	if networks, _ := dialer.calls(); len(networks) != 0 {
+		t.Fatalf("invalid MCA identity dialed the gateway: %v", networks)
+	}
+}
+
 func newTLSScenarioClient(t *testing.T, scenario testanyconnect.Scenario, overrides Config) (*Client, *testanyconnect.Gateway, context.CancelFunc) {
 	t.Helper()
 	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))

@@ -32,6 +32,10 @@ func TestParseOpenConnect(t *testing.T) {
 		"password-authentication-disabled": true,
 		"pfs":                              true,
 		"allow-insecure-crypto":            true,
+		"mca-certificate":                  "test MCA certificate",
+		"mca-key":                          "test MCA key",
+		"mca-key-password":                 "test MCA password",
+		"cert-expire-warning":              30,
 		"dtls-mode":                        "off",
 		"dtls-local-port":                  44444,
 		"legacy-dtls":                      false,
@@ -89,6 +93,8 @@ func TestParseOpenConnectRejectsInvalidOptions(t *testing.T) {
 		}},
 		{name: "certificate without key", change: func(mapping map[string]any) { mapping["cert"] = "client certificate" }},
 		{name: "key password without key", change: func(mapping map[string]any) { mapping["key-password"] = "private-secret" }},
+		{name: "MCA certificate without key", change: func(mapping map[string]any) { mapping["mca-certificate"] = "MCA certificate" }},
+		{name: "MCA key password without key", change: func(mapping map[string]any) { mapping["mca-key-password"] = "private-secret" }},
 		{name: "invalid token mode", change: func(mapping map[string]any) {
 			mapping["token-mode"] = "invalid"
 			mapping["token-secret"] = "private-secret"
@@ -107,6 +113,7 @@ func TestParseOpenConnectRejectsInvalidOptions(t *testing.T) {
 		{name: "negative DPD interval", change: func(mapping map[string]any) { mapping["dpd-interval"] = -1 }},
 		{name: "negative reconnect timeout", change: func(mapping map[string]any) { mapping["reconnect-timeout"] = -1 }},
 		{name: "DTLS local port overflow", change: func(mapping map[string]any) { mapping["dtls-local-port"] = 65536 }},
+		{name: "negative certificate expiry warning", change: func(mapping map[string]any) { mapping["cert-expire-warning"] = -1 }},
 		{name: "promoted form value", change: func(mapping map[string]any) {
 			mapping["form-entries"] = []map[string]any{{"submission-key": "answer", "value": "value", "promote": true}}
 		}},

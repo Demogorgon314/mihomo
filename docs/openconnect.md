@@ -23,6 +23,11 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
   when no trust option is configured, verification uses the system roots.
 - `cert` and `key` must be configured together. Encrypted keys also require the
   matching `key-password`.
+- `mca-certificate` and `mca-key` configure the separate signing identity used
+  by AnyConnect multiple-certificate authentication. Encrypted MCA keys require
+  `mca-key-password`; private material is redacted like the normal client key.
+- `cert-expire-warning` matches OpenConnect's day-based option. It defaults to
+  `60`; set it to `0` to disable client and MCA certificate expiry warnings.
 - `dns` accepts IP literals only and requires `remote-dns-resolve: true`. This
   prevents the tunnel's private resolver from recursively resolving itself.
 - `dtls-mode: auto` prefers DTLS and falls back to CSTP. `require` fails closed
