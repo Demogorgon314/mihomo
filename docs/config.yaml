@@ -1422,7 +1422,7 @@ proxies: # socks5
     # dtls-key-exchange: auto # auto offers modern PSK first; resumption prefers AES-GCM injected session resumption
     # legacy-dtls: false # enables Cisco DTLS 0.9 MD5/SHA-1/AES-CBC only when explicitly required
     # compression: stateless # off, stateless, or all; defaults to stateless
-    # ipv6: false
+    # ipv6-disabled: false # IPv6 is enabled by default
     # mtu: 0 # 0 uses the gateway value; IPv6 requires at least 1280
     # base-mtu: 0
     # queue-length: 0 # 0 uses the default; maximum 4096

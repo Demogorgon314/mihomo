@@ -197,7 +197,7 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		DTLS12CipherSuites:  modernDTLS12CipherSuites,
 		CompressionDisabled: compressionDisabled,
 		CompressionMode:     compressionMode,
-		IPv6Disabled:        !config.IPv6,
+		IPv6Disabled:        config.IPv6Disabled,
 		MTU:                 config.MTU,
 		BaseMTU:             config.BaseMTU,
 		QueueLength:         config.QueueLength,
