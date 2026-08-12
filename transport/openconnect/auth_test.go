@@ -343,7 +343,7 @@ func TestClientAutomaticTOTPAndHOTP(t *testing.T) {
 	})
 }
 
-func TestClientBrowserRequestEmitsEventAndRequiresProvider(t *testing.T) {
+func TestClientWithoutProviderDisablesExternalAuthentication(t *testing.T) {
 	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testanyconnect.Scenario) {
 		scenario.Authentication.Browser = true
 		scenario.Authentication.Challenge = ""
@@ -359,8 +359,31 @@ func TestClientBrowserRequestEmitsEventAndRequiresProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := client.WaitReady(ctx)
-	if !errors.Is(err, ErrAuthRequired) || !IsTerminal(err) {
-		t.Fatalf("expected browser auth-required error, got %v", err)
+	if err == nil || !IsTerminal(err) || !strings.Contains(err.Error(), "disabled external authentication") {
+		t.Fatalf("expected disabled external authentication error, got %v", err)
+	}
+}
+
+func TestClientBrowserRequestEmitsEventWithProvider(t *testing.T) {
+	provider := authProviderFunc(func(context.Context, AuthChallenge) (AuthResponse, error) {
+		return AuthResponse{}, errors.New("stop browser authentication")
+	})
+	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, provider, func(scenario *testanyconnect.Scenario) {
+		scenario.Authentication.Browser = true
+		scenario.Authentication.Challenge = ""
+		scenario.Authentication.ChallengeResponse = ""
+	}, func(config *Config) {
+		config.Username = "phase2-user"
+	})
+	defer closeGateway()
+	defer func() { _ = client.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.WaitReady(ctx); !errors.Is(err, ErrAuthProvider) || !IsTerminal(err) {
+		t.Fatalf("expected browser provider error, got %v", err)
 	}
 	select {
 	case event := <-client.Events():

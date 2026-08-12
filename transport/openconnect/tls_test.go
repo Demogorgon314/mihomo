@@ -25,10 +25,11 @@ func TestClientEncryptedClientCertificate(t *testing.T) {
 	scenario := testanyconnect.BasicCSTPScenario()
 	scenario.Authentication.ClientCertificateAuthority = caPEM
 	client, gateway, cancel := newTLSScenarioClient(t, scenario, Config{
-		Cookie:            scenario.Cookie,
-		ClientCertificate: certificatePEM,
-		ClientKey:         encryptedKeyPEM,
-		ClientKeyPassword: password,
+		Cookie:              scenario.Cookie,
+		ClientCertificate:   certificatePEM,
+		ClientKey:           encryptedKeyPEM,
+		ClientKeyPassword:   password,
+		SystemTrustDisabled: true,
 	})
 	defer cancel()
 	defer func() { _ = gateway.Close() }()
@@ -118,7 +119,7 @@ func newTLSScenarioClient(t *testing.T, scenario testanyconnect.Scenario, overri
 	if config.ServerName == "" {
 		config.ServerName = gateway.ServerName()
 	}
-	if len(config.CertificateAuthority) == 0 && !config.SkipCertVerify && config.PeerFingerprint == "" {
+	if len(config.CertificateAuthority) == 0 && !config.SkipCertVerify && config.PeerFingerprint == "" && len(config.PeerFingerprints) == 0 {
 		config.CertificateAuthority = testanyconnect.RootCAPEM()
 	}
 	client, err := NewClient(ctx, config, new(recordingDialer), nil)
