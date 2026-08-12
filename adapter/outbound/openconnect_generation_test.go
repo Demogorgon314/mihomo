@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/component/resolver"
-	ac "github.com/metacubex/mihomo/transport/anyconnect"
+	oc "github.com/metacubex/mihomo/transport/openconnect"
 
 	wireguard "github.com/metacubex/sing-wireguard"
 	M "github.com/metacubex/sing/common/metadata"
@@ -24,8 +24,8 @@ import (
 
 type generationTestClient struct{}
 
-func (generationTestClient) WaitReady(context.Context) (ac.NetworkConfig, error) {
-	return ac.NetworkConfig{}, nil
+func (generationTestClient) WaitReady(context.Context) (oc.NetworkConfig, error) {
+	return oc.NetworkConfig{}, nil
 }
 
 func (generationTestClient) WaitDataPlaneReady(context.Context) (uint64, error) { return 0, nil }
@@ -49,8 +49,8 @@ type packetSequenceTestClient struct {
 	revision atomic.Uint64
 }
 
-func (c *packetSequenceTestClient) WaitReady(context.Context) (ac.NetworkConfig, error) {
-	return ac.NetworkConfig{}, nil
+func (c *packetSequenceTestClient) WaitReady(context.Context) (oc.NetworkConfig, error) {
+	return oc.NetworkConfig{}, nil
 }
 
 func (*packetSequenceTestClient) WaitDataPlaneReady(context.Context) (uint64, error) {
@@ -160,8 +160,8 @@ func (d *incomingBatchTestDevice) recordWrite(packets [][]byte) (int, error) {
 
 func (*incomingBatchTestDevice) Close() error { return nil }
 
-func (*outboundBatchTestClient) WaitReady(context.Context) (ac.NetworkConfig, error) {
-	return ac.NetworkConfig{}, nil
+func (*outboundBatchTestClient) WaitReady(context.Context) (oc.NetworkConfig, error) {
+	return oc.NetworkConfig{}, nil
 }
 
 func (*outboundBatchTestClient) WaitDataPlaneReady(context.Context) (uint64, error) {
@@ -195,16 +195,16 @@ func TestAnyConnectStackPacketsUseBoundedBatches(t *testing.T) {
 	defer cancel()
 	device := &outboundBatchTestDevice{packets: make(chan []byte, 3)}
 	client := &outboundBatchTestClient{batches: make(chan []byte, 3)}
-	generation := &anyConnectGeneration{
+	generation := &openConnectGeneration{
 		device:          device,
 		revision:        1,
-		outboundPackets: make(chan []byte, anyConnectOutboundPacketBatchSize),
+		outboundPackets: make(chan []byte, openConnectOutboundPacketBatchSize),
 	}
 	generation.packetPool.New = func() any {
 		return make([]byte, 1400)
 	}
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
-	session := &anyConnectSession{
+	session := &openConnectSession{
 		client:      client,
 		ctx:         sessionCtx,
 		cancel:      sessionCancel,
@@ -223,7 +223,7 @@ func TestAnyConnectStackPacketsUseBoundedBatches(t *testing.T) {
 	for len(written) < 3 {
 		select {
 		case values := <-client.batches:
-			if len(values) == 0 || len(values) > anyConnectOutboundPacketBatchSize {
+			if len(values) == 0 || len(values) > openConnectOutboundPacketBatchSize {
 				t.Fatalf("unexpected batch size %d", len(values))
 			}
 			written = append(written, values...)
@@ -250,17 +250,17 @@ func TestAnyConnectTunnelPacketsWriteOneDeviceBatch(t *testing.T) {
 	defer cancel()
 	client := &incomingBatchTestClient{released: make(chan struct{})}
 	device := &incomingBatchTestDevice{writes: make(chan [][]byte, 1)}
-	configuration := ac.NetworkConfig{
+	configuration := oc.NetworkConfig{
 		Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")},
 		MTU:       1400,
 	}
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
-	session := &anyConnectSession{
+	session := &openConnectSession{
 		client:      client,
 		ctx:         sessionCtx,
 		cancel:      sessionCancel,
 		name:        "incoming-batch-test",
-		generation:  &anyConnectGeneration{device: device, revision: 1, configuration: configuration},
+		generation:  &openConnectGeneration{device: device, revision: 1, configuration: configuration},
 		initialDone: make(chan struct{}),
 		done:        make(chan struct{}),
 	}
@@ -326,22 +326,22 @@ func TestAnyConnectGenerationReplacementClosesBlockedWriter(t *testing.T) {
 	client := &packetSequenceTestClient{packets: make(chan []byte, 1), err: net.ErrClosed}
 	client.revision.Store(1)
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
-	session := &anyConnectSession{
+	session := &openConnectSession{
 		client:          client,
 		ctx:             sessionCtx,
 		cancel:          sessionCancel,
 		name:            "blocked-generation-test",
-		resolverFactory: func(ac.NetworkConfig) (resolver.Resolver, error) { return nil, nil },
+		resolverFactory: func(oc.NetworkConfig) (resolver.Resolver, error) { return nil, nil },
 		initialDone:     make(chan struct{}),
 		done:            make(chan struct{}),
 	}
-	configuration := ac.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")}, MTU: 1400}
+	configuration := oc.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")}, MTU: 1400}
 	device := &blockingGenerationTestDevice{
 		writeStarted: make(chan struct{}, 1),
 		releaseWrite: make(chan struct{}, 1),
 		closed:       make(chan struct{}),
 	}
-	session.generation = &anyConnectGeneration{device: device, revision: 1, configuration: configuration}
+	session.generation = &openConnectGeneration{device: device, revision: 1, configuration: configuration}
 	session.configuration = configuration
 	session.signalInitial(nil)
 	session.wait.Add(1)
@@ -365,7 +365,7 @@ func TestAnyConnectGenerationReplacementClosesBlockedWriter(t *testing.T) {
 	metadataUpdate.DNS = []netip.Addr{netip.MustParseAddr("192.0.2.53")}
 	metadataUpdated := make(chan error, 1)
 	go func() {
-		metadataUpdated <- session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigReestablishment, Revision: 2, Config: metadataUpdate})
+		metadataUpdated <- session.applyNetworkConfig(oc.NetworkConfigEvent{Reason: oc.NetworkConfigReestablishment, Revision: 2, Config: metadataUpdate})
 	}()
 	updateDeadline := time.NewTimer(time.Second)
 	defer updateDeadline.Stop()
@@ -406,10 +406,10 @@ func TestAnyConnectGenerationReplacementClosesBlockedWriter(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatalf("second stack writer did not block in the fake device: %v", ctx.Err())
 	}
-	replacement := ac.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("198.51.100.2/24")}, MTU: 1400}
+	replacement := oc.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("198.51.100.2/24")}, MTU: 1400}
 	replaced := make(chan error, 1)
 	go func() {
-		replaced <- session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigRekey, Revision: 3, Config: replacement})
+		replaced <- session.applyNetworkConfig(oc.NetworkConfigEvent{Reason: oc.NetworkConfigRekey, Revision: 3, Config: replacement})
 	}()
 	select {
 	case err := <-replaced:
@@ -433,12 +433,12 @@ func TestAnyConnectNetworkGenerationReplacement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
-	session := &anyConnectSession{
+	session := &openConnectSession{
 		client:          generationTestClient{},
 		ctx:             sessionCtx,
 		cancel:          sessionCancel,
 		name:            "generation-test",
-		resolverFactory: func(ac.NetworkConfig) (resolver.Resolver, error) { return nil, nil },
+		resolverFactory: func(oc.NetworkConfig) (resolver.Resolver, error) { return nil, nil },
 		initialDone:     make(chan struct{}),
 		done:            make(chan struct{}),
 	}
@@ -450,8 +450,8 @@ func TestAnyConnectNetworkGenerationReplacement(t *testing.T) {
 	}()
 	t.Cleanup(func() { _ = session.close() })
 
-	initial := ac.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24"), netip.MustParsePrefix("198.51.100.2/24")}, DNS: []netip.Addr{netip.MustParseAddr("192.0.2.53")}, MTU: 1400}
-	if err := session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigInitial, Revision: 1, Config: initial}); err != nil {
+	initial := oc.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24"), netip.MustParsePrefix("198.51.100.2/24")}, DNS: []netip.Addr{netip.MustParseAddr("192.0.2.53")}, MTU: 1400}
+	if err := session.applyNetworkConfig(oc.NetworkConfigEvent{Reason: oc.NetworkConfigInitial, Revision: 1, Config: initial}); err != nil {
 		t.Fatal(err)
 	}
 	first, _, err := session.currentDevice()
@@ -466,7 +466,7 @@ func TestAnyConnectNetworkGenerationReplacement(t *testing.T) {
 	metadataOnly := initial
 	metadataOnly.Addresses = []netip.Prefix{initial.Addresses[1], initial.Addresses[0]}
 	metadataOnly.DNS = []netip.Addr{netip.MustParseAddr("192.0.2.54")}
-	if err := session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigReestablishment, Revision: 2, Config: metadataOnly}); err != nil {
+	if err := session.applyNetworkConfig(oc.NetworkConfigEvent{Reason: oc.NetworkConfigReestablishment, Revision: 2, Config: metadataOnly}); err != nil {
 		t.Fatal(err)
 	}
 	unchanged, _, err := session.currentDevice()
@@ -485,7 +485,7 @@ func TestAnyConnectNetworkGenerationReplacement(t *testing.T) {
 
 	replaced := metadataOnly
 	replaced.Addresses = []netip.Prefix{netip.MustParsePrefix("198.51.100.2/24")}
-	if err := session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigRekey, Revision: 3, Config: replaced}); err != nil {
+	if err := session.applyNetworkConfig(oc.NetworkConfigEvent{Reason: oc.NetworkConfigRekey, Revision: 3, Config: replaced}); err != nil {
 		t.Fatal(err)
 	}
 	second, _, err := session.currentDevice()
@@ -507,12 +507,12 @@ func TestAnyConnectIgnoresUnconfiguredAddressFamily(t *testing.T) {
 	readErr := errors.New("packet sequence complete")
 	client := &packetSequenceTestClient{packets: make(chan []byte, 2), err: readErr}
 	sessionCtx, sessionCancel := context.WithCancel(ctx)
-	session := &anyConnectSession{
+	session := &openConnectSession{
 		client:          client,
 		ctx:             sessionCtx,
 		cancel:          sessionCancel,
 		name:            "address-family-test",
-		resolverFactory: func(ac.NetworkConfig) (resolver.Resolver, error) { return nil, nil },
+		resolverFactory: func(oc.NetworkConfig) (resolver.Resolver, error) { return nil, nil },
 		initialDone:     make(chan struct{}),
 		done:            make(chan struct{}),
 	}
@@ -524,8 +524,8 @@ func TestAnyConnectIgnoresUnconfiguredAddressFamily(t *testing.T) {
 	}()
 	t.Cleanup(func() { _ = session.close() })
 
-	configuration := ac.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")}, MTU: 1400}
-	if err := session.applyNetworkConfig(ac.NetworkConfigEvent{Reason: ac.NetworkConfigInitial, Config: configuration}); err != nil {
+	configuration := oc.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")}, MTU: 1400}
+	if err := session.applyNetworkConfig(oc.NetworkConfigEvent{Reason: oc.NetworkConfigInitial, Config: configuration}); err != nil {
 		t.Fatal(err)
 	}
 	unexpectedIPv6 := make([]byte, 40)
@@ -546,11 +546,11 @@ func TestAnyConnectIgnoresUnconfiguredAddressFamily(t *testing.T) {
 func TestAnyConnectNetworkConfigRejectsInvalidMTUAndAddress(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
-		config ac.NetworkConfig
+		config oc.NetworkConfig
 	}{
-		{name: "missing address", config: ac.NetworkConfig{MTU: 1400}},
-		{name: "IPv4 MTU below minimum", config: ac.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")}, MTU: 575}},
-		{name: "IPv6 MTU below minimum", config: ac.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("2001:db8::2/64")}, MTU: 1279}},
+		{name: "missing address", config: oc.NetworkConfig{MTU: 1400}},
+		{name: "IPv4 MTU below minimum", config: oc.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")}, MTU: 575}},
+		{name: "IPv6 MTU below minimum", config: oc.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("2001:db8::2/64")}, MTU: 1279}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			_, err := validateAnyConnectNetworkConfig(testCase.config)
@@ -559,7 +559,7 @@ func TestAnyConnectNetworkConfigRejectsInvalidMTUAndAddress(t *testing.T) {
 			}
 		})
 	}
-	v4 := ac.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")}, MTU: 1400}
+	v4 := oc.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")}, MTU: 1400}
 	validIPv4 := make([]byte, 20)
 	validIPv4[0] = 0x45
 	validIPv6 := make([]byte, 40)
@@ -569,7 +569,7 @@ func TestAnyConnectNetworkConfigRejectsInvalidMTUAndAddress(t *testing.T) {
 	if packetMatchesGeneration(nil, v4) || packetMatchesGeneration([]byte{0x45}, v4) || packetMatchesGeneration(validIPv6, v4) || packetMatchesGeneration(oversizedIPv4, v4) || !packetMatchesGeneration(validIPv4, v4) {
 		t.Fatal("packet boundary validation accepted an invalid packet or rejected IPv4")
 	}
-	v6 := ac.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("2001:db8::2/64")}, MTU: 1400}
+	v6 := oc.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("2001:db8::2/64")}, MTU: 1400}
 	if !packetMatchesGeneration(validIPv6, v6) || packetMatchesGeneration(validIPv4, v6) {
 		t.Fatal("packet address-family validation rejected IPv6 or accepted IPv4")
 	}
@@ -598,7 +598,7 @@ func FuzzAnyConnectPacketBoundary(f *testing.F) {
 		if mtu < minimumMTU {
 			mtu = minimumMTU
 		}
-		configuration := ac.NetworkConfig{Addresses: []netip.Prefix{address}, MTU: mtu}
+		configuration := oc.NetworkConfig{Addresses: []netip.Prefix{address}, MTU: mtu}
 		got := packetMatchesGeneration(packet, configuration)
 		want := len(packet) >= minimumPacketSize && uint32(len(packet)) <= mtu && packet[0]>>4 == expectedVersion
 		if got != want {

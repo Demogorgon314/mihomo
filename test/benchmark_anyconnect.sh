@@ -107,7 +107,7 @@ run_phase() {
 			run_benchmark P2-record "$dtls_dir" '' '^BenchmarkAnyConnectRecordProtection$' '' "$@"
 			;;
 		p3)
-			run_benchmark P3 "$repo_dir/transport/anyconnect" "$mihomo_mod" '^BenchmarkAnyConnectP3DataPlaneReady$' '' "$@"
+			run_benchmark P3 "$repo_dir/transport/openconnect" "$mihomo_mod" '^BenchmarkAnyConnectP3DataPlaneReady$' '' "$@"
 			;;
 		p4)
 			run_benchmark P4 "$sing_dir" "$sing_mod" '^BenchmarkAnyConnectP4PacketBufferCopy$' '' "$@"

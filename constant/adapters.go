@@ -55,7 +55,7 @@ const (
 	ZeroTier
 	EasyTier
 	GostRelay
-	AnyConnect
+	OpenConnect
 )
 
 const (
@@ -243,8 +243,8 @@ func (at AdapterType) String() string {
 		return "EasyTier"
 	case GostRelay:
 		return "GostRelay"
-	case AnyConnect:
-		return "AnyConnect"
+	case OpenConnect:
+		return "OpenConnect"
 	case Relay:
 		return "Relay"
 	case Selector:
