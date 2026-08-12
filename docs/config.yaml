@@ -1431,8 +1431,11 @@ proxies: # socks5
     # mca-key: |
     # mca-key-password: ""
     # cert-expire-warning: 60 # days; 0 disables the warning, omitted defaults to 60
-    # token-mode: totp # totp or hotp; HOTP requires a persistent counter provider and is not accepted from YAML alone
+    # token-mode: totp # totp, hotp, rsa (SecurID), or oidc; HOTP requires a persistent counter provider and is not accepted from YAML alone
     # token-secret: ""
+    # token-pin: "" # optional RSA SecurID PIN
+    # token-password: "" # optional encrypted RSA token password
+    # token-device-id: "" # optional RSA token device binding
     # xml-post-disabled: false # use the legacy GET authentication flow
     # http-keepalive-disabled: false
     # external-auth-disabled: false # automatically true when no programmatic authentication provider is installed

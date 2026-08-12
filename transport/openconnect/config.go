@@ -13,6 +13,8 @@ const (
 	ProtocolAnyConnect = "anyconnect"
 	TokenModeTOTP      = "totp"
 	TokenModeHOTP      = "hotp"
+	TokenModeRSA       = "rsa"
+	TokenModeOIDC      = "oidc"
 
 	CompressionOff            = "off"
 	CompressionStateless      = "stateless"
@@ -30,6 +32,9 @@ const (
 type TokenConfig struct {
 	Mode          string
 	Secret        string
+	PIN           string
+	Password      string
+	DeviceID      string
 	Counter       uint64
 	UpdateCounter func(ctx context.Context, counter uint64) error
 }
@@ -194,8 +199,10 @@ func (c Config) validate(hasAuthProvider bool) error {
 		return invalidConfig("certificate expiry warning cannot be configured and disabled together")
 	}
 	if c.Token != nil {
-		if c.Token.Mode != TokenModeTOTP && c.Token.Mode != TokenModeHOTP {
-			return invalidConfig("token mode must be totp or hotp")
+		switch c.Token.Mode {
+		case TokenModeTOTP, TokenModeHOTP, TokenModeRSA, TokenModeOIDC:
+		default:
+			return invalidConfig("token mode must be totp, hotp, rsa, or oidc")
 		}
 		if c.Token.Secret == "" {
 			return invalidConfig("token secret is required")
