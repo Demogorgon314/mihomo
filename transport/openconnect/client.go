@@ -169,7 +169,7 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		dtlsMode:             normalizeDTLSMode(config.DTLSMode),
 		transportMonitorDone: make(chan struct{}),
 	}
-	compressionDisabled := config.Compression == "" || config.Compression == CompressionOff
+	compressionDisabled := config.Compression == CompressionOff
 	compressionMode := openconnect.CompressionModeStateless
 	if config.Compression == CompressionAll {
 		compressionMode = openconnect.CompressionModeAll
