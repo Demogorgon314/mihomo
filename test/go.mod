@@ -17,7 +17,9 @@ replace github.com/pion/dtls/v3 => github.com/Demogorgon314/dtls/v3 v3.1.6-0.202
 
 replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-openconnect v0.0.0-20260811215223-3fe653b3a272
 
-replace github.com/metacubex/sing-wireguard => github.com/Demogorgon314/sing-wireguard v0.0.0-20260812031228-acea56066efb
+replace github.com/metacubex/gvisor => github.com/Demogorgon314/gvisor v0.0.0-20260812092912-ac17c043e623
+
+replace github.com/metacubex/sing-wireguard => github.com/Demogorgon314/sing-wireguard v0.0.0-20260812093029-b36422d4aa1c
 
 require (
 	github.com/Microsoft/go-winio v0.6.0 // indirect
@@ -81,7 +83,7 @@ require (
 	github.com/metacubex/edwards25519 v1.2.0 // indirect
 	github.com/metacubex/fswatch v0.1.1 // indirect
 	github.com/metacubex/gopacket v1.1.20-0.20230608035415-7e2f98a3e759 // indirect
-	github.com/metacubex/gvisor v0.0.0-20251227095601-261ec1326fe8 // indirect
+	github.com/metacubex/gvisor v0.0.0-20260810011720-3cc44cf9ac22 // indirect
 	github.com/metacubex/hkdf v0.1.0 // indirect
 	github.com/metacubex/hpke v0.1.0 // indirect
 	github.com/metacubex/http v0.1.6 // indirect
@@ -102,7 +104,7 @@ require (
 	github.com/metacubex/sing-quic v0.0.0-20260527143057-68e10a6afdc3 // indirect
 	github.com/metacubex/sing-shadowsocks v0.2.12 // indirect
 	github.com/metacubex/sing-shadowsocks2 v0.2.7 // indirect
-	github.com/metacubex/sing-tun v0.4.21 // indirect
+	github.com/metacubex/sing-tun v0.4.22 // indirect
 	github.com/metacubex/sing-vmess v0.2.5 // indirect
 	github.com/metacubex/sing-wireguard v0.0.0-20260520151737-7e7c7c1b854c // indirect
 	github.com/metacubex/smux v0.0.0-20260105030934-d0c8756d3141 // indirect
