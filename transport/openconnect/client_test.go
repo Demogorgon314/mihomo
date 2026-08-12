@@ -147,6 +147,37 @@ func TestClientCookieCSTP(t *testing.T) {
 	}
 }
 
+func TestClientMobileIdentityMatchesOpenConnectDefaults(t *testing.T) {
+	scenario := testanyconnect.BasicCSTPScenario()
+	scenario.CSTP.ExpectedRequestHeaders = map[string]string{
+		"User-Agent":                              "OpenConnect mobile test",
+		"X-CSTP-Hostname":                         "mobile-client",
+		"X-AnyConnect-Identifier-ClientVersion":   "9.99",
+		"X-AnyConnect-Identifier-Platform":        "android",
+		"X-AnyConnect-Identifier-PlatformVersion": "1.0",
+		"X-AnyConnect-Identifier-DeviceType":      "android",
+		"X-AnyConnect-Identifier-Device-UniqueID": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+	}
+	client, gateway, cancel := newTLSScenarioClient(t, scenario, Config{
+		Cookie:        scenario.Cookie,
+		ReportedOS:    "android",
+		UserAgent:     "OpenConnect mobile test",
+		Version:       "9.99",
+		LocalHostname: "mobile-client",
+	})
+	defer cancel()
+	defer func() { _ = gateway.Close() }()
+	defer func() { _ = client.Close() }()
+	ctx, cancelWait := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelWait()
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.WaitReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClientRejectsInvalidConfigWithoutLeakingCookie(t *testing.T) {
 	secret := "do-not-leak-this-cookie"
 	for _, testCase := range []struct {
@@ -161,7 +192,9 @@ func TestClientRejectsInvalidConfigWithoutLeakingCookie(t *testing.T) {
 		{name: "invalid server name", config: Config{Server: "https://vpn.example", Cookie: secret, ServerName: "bad\nname"}},
 		{name: "invalid reported OS", config: Config{Server: "https://vpn.example", Cookie: secret, ReportedOS: "plan9"}},
 		{name: "invalid user agent", config: Config{Server: "https://vpn.example", Cookie: secret, UserAgent: "bad\r\nagent"}},
+		{name: "incomplete mobile identity", config: Config{Server: "https://vpn.example", Cookie: secret, Mobile: &MobileConfig{PlatformVersion: "1.0", DeviceType: "android"}}},
 		{name: "empty peer fingerprint", config: Config{Server: "https://vpn.example", Cookie: secret, PeerFingerprints: []string{""}}},
+		{name: "promoted form value", config: Config{Server: "https://vpn.example", Cookie: secret, FormEntries: []FormEntry{{SubmissionKey: "answer", Value: "value", Promote: true}}}},
 		{name: "unbounded packet queue", config: Config{Server: "https://vpn.example", Cookie: secret, QueueLength: MaximumQueueLength + 1}},
 		{name: "unsupported protocol", config: Config{Server: "https://vpn.example", Protocol: "gp", Cookie: secret}},
 		{name: "invalid DTLS mode", config: Config{Server: "https://vpn.example", Cookie: secret, DTLSMode: "invalid"}},

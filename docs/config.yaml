@@ -1365,10 +1365,15 @@ proxies: # socks5
     # user-agent: "AnyConnect-compatible OpenConnect VPN Agent 9.21"
     # version: "9.21"
     # local-hostname: client-hostname
+    # mobile: # optional explicit mobile identity; android/apple-ios reported-os uses OpenConnect-compatible defaults when omitted
+    #   platform-version: "14"
+    #   device-type: android
+    #   device-unique-id: device-id
     # form-entries: # static answers for additional gateway forms
     #   - form-id: login
     #     name: secondary_password
     #     value: answer
+    #     promote: false # ask the authentication provider instead of supplying value; cannot be combined with value
     # ca: | # PEM CA bundle; ca, peer fingerprint(s), and skip-cert-verify are mutually exclusive
     #   -----BEGIN CERTIFICATE-----
     #   MIIB...example
@@ -1390,6 +1395,7 @@ proxies: # socks5
     # pfs: false # require forward-secret TLS cipher suites
     # allow-insecure-crypto: false # permit legacy TLS/ciphers for old gateways
     # dtls-mode: auto # off, auto, or require; auto falls back to CSTP
+    # dtls-local-port: 0 # local UDP source port; 0 lets the OS choose
     # dtls-key-exchange: auto # auto matches OpenConnect negotiation; resumption restricts negotiation to injected AES-GCM resumption
     # legacy-dtls: true # matches OpenConnect; false disables Cisco DTLS 0.9 MD5/SHA-1/AES-CBC compatibility
     # compression: stateless # off, stateless, or all; defaults to stateless

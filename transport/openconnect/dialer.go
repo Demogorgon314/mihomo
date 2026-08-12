@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"strconv"
 
 	M "github.com/sagernet/sing/common/metadata"
 )
@@ -16,14 +17,15 @@ type Dialer interface {
 }
 
 type singDialer struct {
-	dialer Dialer
+	dialer    Dialer
+	localPort uint16
 }
 
-func newSingDialer(dialer Dialer) (*singDialer, error) {
+func newSingDialer(dialer Dialer, localPort uint16) (*singDialer, error) {
 	if dialer == nil {
 		return nil, invalidConfig("underlay dialer is required")
 	}
-	return &singDialer{dialer: dialer}, nil
+	return &singDialer{dialer: dialer, localPort: localPort}, nil
 }
 
 func (d *singDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -34,5 +36,14 @@ func (d *singDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) 
 	if !destination.Addr.IsValid() {
 		return nil, errors.New("openconnect UDP destination must be resolved")
 	}
-	return d.dialer.ListenPacket(ctx, "udp", destination.String(), destination.AddrPort())
+	network := "udp"
+	localAddress := ""
+	if destination.IsIPv4() {
+		network = "udp4"
+		localAddress = net.IPv4zero.String()
+	} else if destination.IsIPv6() {
+		network = "udp6"
+		localAddress = net.IPv6unspecified.String()
+	}
+	return d.dialer.ListenPacket(ctx, network, net.JoinHostPort(localAddress, strconv.Itoa(int(d.localPort))), destination.AddrPort())
 }
