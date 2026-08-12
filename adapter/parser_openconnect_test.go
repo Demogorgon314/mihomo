@@ -72,6 +72,25 @@ func TestNewOpenConnectAcceptsIPv6Gateway(t *testing.T) {
 	}
 }
 
+func TestParseOpenConnectAcceptsF5Protocol(t *testing.T) {
+	proxy, err := ParseProxy(map[string]any{
+		"name":          "f5-vpn",
+		"type":          "openconnect",
+		"protocol":      "f5",
+		"server":        "vpn.example.com",
+		"cookie":        "MRHSession=test-cookie",
+		"ipv6-disabled": true,
+		"dtls-mode":     "off",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = proxy.Close() }()
+	if proxy.Type() != C.OpenConnect || proxy.Name() != "f5-vpn" {
+		t.Fatalf("unexpected parsed F5 proxy: type=%s name=%q", proxy.Type(), proxy.Name())
+	}
+}
+
 func TestParseOpenConnectRejectsInvalidOptions(t *testing.T) {
 	secret := "parser-secret-cookie"
 	for _, testCase := range []struct {
