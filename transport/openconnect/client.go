@@ -18,7 +18,7 @@ import (
 const (
 	modernDTLSCipherSuites      = "PSK-NEGOTIATE:OC2-DTLS1_2-CHACHA20-POLY1305:OC-DTLS1_2-AES256-GCM:OC-DTLS1_2-AES128-GCM"
 	resumptionDTLSCipherSuites  = "OC-DTLS1_2-AES256-GCM:OC-DTLS1_2-AES128-GCM"
-	legacyDTLSCipherSuiteSuffix = ":AES256-SHA:AES128-SHA"
+	legacyDTLSCipherSuiteSuffix = ":DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA:AES256-SHA:AES128-SHA"
 	modernDTLS12CipherSuites    = "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-GCM-SHA256"
 	maximumIncomingPacketBatch  = 64
 )
@@ -177,8 +177,7 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	dtlsCipherSuites := modernDTLSCipherSuites
 	if config.DTLSKeyExchange == DTLSKeyExchangeResumption {
 		dtlsCipherSuites = resumptionDTLSCipherSuites
-	}
-	if config.LegacyDTLS {
+	} else if !config.LegacyDTLSDisabled {
 		dtlsCipherSuites += legacyDTLSCipherSuiteSuffix
 	}
 	core, err := openconnect.NewClient(openconnect.ClientOptions{
@@ -192,7 +191,7 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		Token:               tokenOptions,
 		NoUDP:               normalizeDTLSMode(config.DTLSMode) == DTLSModeOff,
 		DTLSRequired:        normalizeDTLSMode(config.DTLSMode) == DTLSModeRequire,
-		LegacyDTLSDisabled:  !config.LegacyDTLS,
+		LegacyDTLSDisabled:  config.LegacyDTLSDisabled,
 		DTLSCipherSuites:    dtlsCipherSuites,
 		DTLS12CipherSuites:  modernDTLS12CipherSuites,
 		CompressionDisabled: compressionDisabled,

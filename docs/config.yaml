@@ -1378,8 +1378,8 @@ proxies: # socks5
     # token-mode: totp # totp or hotp; HOTP requires a persistent counter provider and is not accepted from YAML alone
     # token-secret: ""
     # dtls-mode: auto # off, auto, or require; auto falls back to CSTP
-    # dtls-key-exchange: auto # auto offers modern PSK first; resumption prefers AES-GCM injected session resumption
-    # legacy-dtls: false # enables Cisco DTLS 0.9 MD5/SHA-1/AES-CBC only when explicitly required
+    # dtls-key-exchange: auto # auto matches OpenConnect negotiation; resumption restricts negotiation to injected AES-GCM resumption
+    # legacy-dtls: true # matches OpenConnect; false disables Cisco DTLS 0.9 MD5/SHA-1/AES-CBC compatibility
     # compression: stateless # off, stateless, or all; defaults to stateless
     # ipv6-disabled: false # IPv6 is enabled by default
     # mtu: 0 # 0 uses the gateway value; IPv6 requires at least 1280
