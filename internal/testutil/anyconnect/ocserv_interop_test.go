@@ -70,7 +70,13 @@ func BenchmarkOCServAnyConnectDataPlaneE2E(b *testing.B) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	fixture := startOCServFixture(b, ctx)
+	fixture := startOCServFixtureWithOptions(b, ctx, ocservFixtureOptions{
+		compression: false,
+		dtlsPSK:     false,
+		// ocserv groups Cisco's DTLS 1.2 injected-resumption protocol under
+		// this server-side compatibility switch. The client still rejects DTLS 0.9.
+		dtlsLegacy: true,
+	})
 	cookie, err := RunAuthProbe(ctx, AuthProbeOptions{
 		Address:    fixture.tcpAddress,
 		ServerName: fakeGatewayServerName,
@@ -86,14 +92,18 @@ func BenchmarkOCServAnyConnectDataPlaneE2E(b *testing.B) {
 		b.Fatal(err)
 	}
 	proxy, err := adapter.ParseProxy(map[string]any{
-		"name":        "ocserv-anyconnect-benchmark",
-		"type":        "anyconnect",
-		"server":      fakeGatewayServerName,
-		"port":        port,
-		"cookie":      cookie,
-		"ca":          string(fixture.certificatePEM),
-		"server-name": fakeGatewayServerName,
-		"dtls-mode":   "require",
+		"name":              "ocserv-anyconnect-benchmark",
+		"type":              "anyconnect",
+		"server":            fakeGatewayServerName,
+		"port":              port,
+		"cookie":            cookie,
+		"ca":                string(fixture.certificatePEM),
+		"server-name":       fakeGatewayServerName,
+		"dtls-mode":         "auto",
+		"dtls-key-exchange": "resumption",
+		"legacy-dtls":       false,
+		"compression":       "off",
+		"ipv6":              false,
 	}, adapter.WithDialerForAPI(&ocservOutboundDialer{tcpAddress: fixture.tcpAddress, udpAddress: fixture.udpAddress}))
 	if err != nil {
 		b.Fatal(err)
@@ -107,6 +117,7 @@ func BenchmarkOCServAnyConnectDataPlaneE2E(b *testing.B) {
 				b.Fatal(dialErr)
 			}
 			defer connection.Close()
+			waitForOCServBenchmarkDTLS(b, ctx, fixture.containerID)
 			if deadline, loaded := ctx.Deadline(); loaded {
 				if err = connection.SetDeadline(deadline); err != nil {
 					b.Fatal(err)
@@ -151,6 +162,30 @@ func BenchmarkOCServAnyConnectDataPlaneE2E(b *testing.B) {
 				b.Fatal(readErr)
 			}
 		})
+	}
+}
+
+func waitForOCServBenchmarkDTLS(t testing.TB, ctx context.Context, containerID string) {
+	t.Helper()
+	waitContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var latest string
+	for {
+		output, err := dockerOutput(waitContext, "logs", containerID)
+		if err == nil {
+			latest = output
+			if strings.Contains(output, "DTLS ciphersuite: ECDHE-RSA-AES256-GCM-SHA384") &&
+				strings.Contains(output, "Main DTLS session 1 active") {
+				return
+			}
+		} else {
+			latest = err.Error()
+		}
+		select {
+		case <-waitContext.Done():
+			t.Fatalf("ocserv did not activate the production AES-256-GCM DTLS data plane:\n%s", latest)
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 }
 
@@ -210,10 +245,23 @@ type ocservFixture struct {
 	certificatePEM []byte
 }
 
+type ocservFixtureOptions struct {
+	compression bool
+	dtlsPSK     bool
+	dtlsLegacy  bool
+}
+
 func startOCServFixture(t testing.TB, ctx context.Context) ocservFixture {
+	return startOCServFixtureWithOptions(t, ctx, ocservFixtureOptions{
+		compression: true,
+		dtlsPSK:     true,
+	})
+}
+
+func startOCServFixtureWithOptions(t testing.TB, ctx context.Context, options ocservFixtureOptions) ocservFixture {
 	t.Helper()
 	fixtureDirectory := t.TempDir()
-	roots, certificatePEM := writeOCServFixture(t, fixtureDirectory)
+	roots, certificatePEM := writeOCServFixture(t, fixtureDirectory, options)
 	runDocker(t, ctx, "build", "--pull=false", "--tag", ocservImage, filepath.Join("testdata", "ocserv"))
 	containerID := strings.TrimSpace(runDocker(t, ctx,
 		"run", "--detach", "--rm",
@@ -267,7 +315,7 @@ func startOCServFixture(t testing.TB, ctx context.Context) ocservFixture {
 	}
 }
 
-func writeOCServFixture(t testing.TB, directory string) (*x509.CertPool, []byte) {
+func writeOCServFixture(t testing.TB, directory string, options ocservFixtureOptions) (*x509.CertPool, []byte) {
 	t.Helper()
 	certificatePEM, keyPEM, roots := newOCServCertificate(t)
 	configuration := `auth = "plain[passwd=/fixture/ocpasswd]"
@@ -303,6 +351,11 @@ compression = true
 compression-algo-priority = lzs:1000
 no-compress-limit = 64
 `
+	if !options.compression {
+		configuration = strings.Replace(configuration, "compression = true", "compression = false", 1)
+	}
+	configuration = strings.Replace(configuration, "dtls-psk = true", fmt.Sprintf("dtls-psk = %t", options.dtlsPSK), 1)
+	configuration = strings.Replace(configuration, "dtls-legacy = false", fmt.Sprintf("dtls-legacy = %t", options.dtlsLegacy), 1)
 	files := map[string][]byte{
 		"ocserv.conf":     []byte(configuration),
 		"ocpasswd":        []byte("test:users:$5$i6SNmLDCgBNjyJ7q$SZ4bVJb7I/DLgXo3txHBVohRFBjOtdbxGQZp.DOnrA.\n"),
