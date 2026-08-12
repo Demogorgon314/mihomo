@@ -10,16 +10,28 @@ import (
 
 func TestParseOpenConnect(t *testing.T) {
 	proxy, err := ParseProxy(map[string]any{
-		"name":              "vpn",
-		"type":              "openconnect",
-		"protocol":          "anyconnect",
-		"server":            "vpn.example.com",
-		"cookie":            "test-cookie",
-		"dtls-mode":         "off",
-		"legacy-dtls":       false,
-		"handshake-timeout": 10,
-		"ipv6-disabled":     true,
-		"mtu":               1200,
+		"name":                             "vpn",
+		"type":                             "openconnect",
+		"protocol":                         "anyconnect",
+		"server":                           "vpn.example.com",
+		"cookie":                           "test-cookie",
+		"reported-os":                      "linux-64",
+		"user-agent":                       "OpenConnect test agent",
+		"version":                          "9.21",
+		"local-hostname":                   "test-client",
+		"peer-fingerprints":                []string{"sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+		"system-trust-disabled":            true,
+		"http-keepalive-disabled":          true,
+		"xml-post-disabled":                true,
+		"external-auth-disabled":           true,
+		"password-authentication-disabled": true,
+		"pfs":                              true,
+		"allow-insecure-crypto":            true,
+		"dtls-mode":                        "off",
+		"legacy-dtls":                      false,
+		"handshake-timeout":                10,
+		"ipv6-disabled":                    true,
+		"mtu":                              1200,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +68,8 @@ func TestParseOpenConnectRejectsInvalidOptions(t *testing.T) {
 		{name: "port overflow", change: func(mapping map[string]any) { mapping["port"] = 65536 }},
 		{name: "missing cookie", change: func(mapping map[string]any) { delete(mapping, "cookie") }},
 		{name: "invalid cookie", change: func(mapping map[string]any) { mapping["cookie"] = secret + "\n" }},
+		{name: "invalid reported OS", change: func(mapping map[string]any) { mapping["reported-os"] = "plan9" }},
+		{name: "invalid user agent", change: func(mapping map[string]any) { mapping["user-agent"] = "bad\r\nagent" }},
 		{name: "conflicting TLS trust", change: func(mapping map[string]any) {
 			mapping["ca"] = "test CA"
 			mapping["peer-fingerprint"] = "sha256:0000"
