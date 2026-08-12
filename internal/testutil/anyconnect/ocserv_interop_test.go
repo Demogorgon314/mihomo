@@ -101,7 +101,6 @@ func BenchmarkOCServAnyConnectDataPlaneE2E(b *testing.B) {
 		"server-name":       fakeGatewayServerName,
 		"dtls-mode":         "auto",
 		"dtls-key-exchange": "resumption",
-		"legacy-dtls":       false,
 		"compression":       "off",
 		"ipv6-disabled":     true,
 	}, adapter.WithDialerForAPI(&ocservOutboundDialer{tcpAddress: fixture.tcpAddress, udpAddress: fixture.udpAddress}))
