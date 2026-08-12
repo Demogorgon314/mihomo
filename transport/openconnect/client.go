@@ -16,11 +16,10 @@ import (
 )
 
 const (
-	modernDTLSCipherSuites      = "PSK-NEGOTIATE:OC2-DTLS1_2-CHACHA20-POLY1305:OC-DTLS1_2-AES256-GCM:OC-DTLS1_2-AES128-GCM"
-	resumptionDTLSCipherSuites  = "OC-DTLS1_2-AES256-GCM:OC-DTLS1_2-AES128-GCM"
-	legacyDTLSCipherSuiteSuffix = ":DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA:AES256-SHA:AES128-SHA"
-	modernDTLS12CipherSuites    = "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-GCM-SHA256"
-	maximumIncomingPacketBatch  = 64
+	modernDTLSCipherSuites     = "PSK-NEGOTIATE:OC2-DTLS1_2-CHACHA20-POLY1305:OC-DTLS1_2-AES256-GCM:OC-DTLS1_2-AES128-GCM"
+	resumptionDTLSCipherSuites = "OC-DTLS1_2-AES256-GCM:OC-DTLS1_2-AES128-GCM"
+	modernDTLS12CipherSuites   = "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-GCM-SHA256"
+	maximumIncomingPacketBatch = 64
 )
 
 // NetworkConfig is a caller-owned snapshot of the negotiated tunnel settings.
@@ -174,11 +173,13 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	if config.Compression == CompressionAll {
 		compressionMode = openconnect.CompressionModeAll
 	}
-	dtlsCipherSuites := modernDTLSCipherSuites
+	var dtlsCipherSuites string
+	var dtls12CipherSuites string
 	if config.DTLSKeyExchange == DTLSKeyExchangeResumption {
 		dtlsCipherSuites = resumptionDTLSCipherSuites
-	} else if !config.LegacyDTLSDisabled {
-		dtlsCipherSuites += legacyDTLSCipherSuiteSuffix
+	} else if config.LegacyDTLSDisabled {
+		dtlsCipherSuites = modernDTLSCipherSuites
+		dtls12CipherSuites = modernDTLS12CipherSuites
 	}
 	core, err := openconnect.NewClient(openconnect.ClientOptions{
 		Context:             ctx,
@@ -193,7 +194,7 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		DTLSRequired:        normalizeDTLSMode(config.DTLSMode) == DTLSModeRequire,
 		LegacyDTLSDisabled:  config.LegacyDTLSDisabled,
 		DTLSCipherSuites:    dtlsCipherSuites,
-		DTLS12CipherSuites:  modernDTLS12CipherSuites,
+		DTLS12CipherSuites:  dtls12CipherSuites,
 		CompressionDisabled: compressionDisabled,
 		CompressionMode:     compressionMode,
 		IPv6Disabled:        config.IPv6Disabled,

@@ -1573,6 +1573,21 @@ func TestAnyConnectHandshakeTimeoutIsLatched(t *testing.T) {
 	}
 }
 
+func TestOpenConnectHandshakeContext(t *testing.T) {
+	withoutTimeout, cancelWithoutTimeout := openConnectHandshakeContext(context.Background(), 0)
+	defer cancelWithoutTimeout()
+	if _, hasDeadline := withoutTimeout.Deadline(); hasDeadline {
+		t.Fatal("zero handshake timeout created an overall deadline")
+	}
+
+	withTimeout, cancelWithTimeout := openConnectHandshakeContext(context.Background(), time.Second)
+	defer cancelWithTimeout()
+	deadline, hasDeadline := withTimeout.Deadline()
+	if !hasDeadline || time.Until(deadline) <= 0 || time.Until(deadline) > time.Second {
+		t.Fatalf("positive handshake timeout created an invalid deadline: deadline=%v present=%v", deadline, hasDeadline)
+	}
+}
+
 func newFakeAnyConnectOutbound(t testing.TB, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int) *OpenConnect {
 	return newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, handshakeTimeout, nil)
 }
