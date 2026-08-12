@@ -28,14 +28,15 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
   per-packet `oc-lz4` or `lzs`; use `off` to disable compression explicitly.
 - IPv6 is enabled by default, matching OpenConnect. Set `ipv6-disabled: true`
   to request and use IPv4 tunnel configuration only.
-- `dtls-key-exchange: auto` preserves the broadest gateway compatibility and
-  lets a PSK-capable server select modern PSK negotiation. `resumption` omits
-  that offer and requests injected session resumption, which can substantially
-  reduce CPU use on AES-accelerated systems. Gateways without that mechanism
-  fall back according to `dtls-mode`; validate this option against the target
-  gateway before deployment.
-- `legacy-dtls: true` is an explicit opt-in to Cisco DTLS 0.9 and its deprecated
-  MD5/SHA-1/AES-CBC cryptography. It is never enabled by negotiation alone.
+- `dtls-key-exchange` defaults to `auto`, matching OpenConnect by advertising
+  the supported PSK, injected-resumption, and compatibility suites and letting
+  the gateway select. `resumption` narrows the offer to injected AES-GCM session
+  resumption, which can substantially reduce CPU use on AES-accelerated systems.
+  Gateways without that mechanism fall back according to `dtls-mode`; validate
+  this override against the target gateway before deployment.
+- `legacy-dtls` defaults to `true`, matching OpenConnect compatibility behavior.
+  Set it to `false` to prevent negotiation of Cisco DTLS 0.9 and its deprecated
+  MD5/SHA-1/AES-CBC cryptography.
 - YAML supports a pre-authenticated cookie, username/password, authgroup,
   static form entries, client certificates, and TOTP. HOTP is rejected from
   YAML because its counter needs a persistent programmatic callback.

@@ -75,7 +75,7 @@ type OpenConnectOption struct {
 	Dns              []string       `proxy:"dns,omitempty"`
 	DTLSMode         string         `proxy:"dtls-mode,omitempty"`
 	DTLSKeyExchange  string         `proxy:"dtls-key-exchange,omitempty"`
-	LegacyDTLS       bool           `proxy:"legacy-dtls,omitempty"`
+	LegacyDTLS       *bool          `proxy:"legacy-dtls,omitempty"`
 
 	AuthProvider       oc.AuthProvider                     `proxy:"-"`
 	TokenCounterUpdate func(context.Context, uint64) error `proxy:"-"`
@@ -121,9 +121,7 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 	if option.DTLSMode != "" && option.DTLSMode != oc.DTLSModeOff && option.DTLSMode != oc.DTLSModeAuto && option.DTLSMode != oc.DTLSModeRequire {
 		return nil, fmt.Errorf("unsupported openconnect DTLS mode %q; expected off, auto, or require", option.DTLSMode)
 	}
-	if option.LegacyDTLS && option.DTLSMode == oc.DTLSModeOff {
-		return nil, errors.New("openconnect legacy DTLS requires DTLS mode auto or require")
-	}
+	legacyDTLSDisabled := option.LegacyDTLS != nil && !*option.LegacyDTLS
 	address := net.JoinHostPort(option.Server, fmt.Sprint(option.Port))
 	config := oc.Config{
 		Server:               "https://" + address,
@@ -149,7 +147,7 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 		ReconnectTimeout:     time.Duration(option.ReconnectTimeout) * time.Second,
 		DTLSMode:             option.DTLSMode,
 		DTLSKeyExchange:      option.DTLSKeyExchange,
-		LegacyDTLS:           option.LegacyDTLS,
+		LegacyDTLSDisabled:   legacyDTLSDisabled,
 		Logger:               log.SingLogger,
 	}
 	if option.TokenMode != "" || option.TokenSecret != "" || option.TokenCounter != 0 || option.TokenCounterUpdate != nil {
@@ -162,9 +160,6 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 	}
 	if err := oc.ValidateConfig(config, option.AuthProvider); err != nil {
 		return nil, err
-	}
-	if option.LegacyDTLS {
-		log.Warnln("[OpenConnect](%s) legacy AnyConnect DTLS 0.9 enables deprecated MD5/SHA-1 handshake and AES-CBC record protection", option.Name)
 	}
 	runCtx, runCancel := context.WithCancel(context.Background())
 	outbound := &OpenConnect{

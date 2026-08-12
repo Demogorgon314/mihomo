@@ -65,7 +65,7 @@ type Config struct {
 	Compression          string
 	DTLSMode             string
 	DTLSKeyExchange      string
-	LegacyDTLS           bool
+	LegacyDTLSDisabled   bool
 	DPDInterval          time.Duration
 	ReconnectTimeout     time.Duration
 	QueueLength          uint32
@@ -165,9 +165,6 @@ func (c Config) validate(hasAuthProvider bool) error {
 	case "", DTLSKeyExchangeAuto, DTLSKeyExchangeResumption:
 	default:
 		return invalidConfig("DTLS key exchange must be auto or resumption")
-	}
-	if c.LegacyDTLS && c.DTLSMode == DTLSModeOff {
-		return invalidConfig("legacy DTLS requires DTLS mode auto or require")
 	}
 	for _, entry := range c.FormEntries {
 		if entry.SubmissionKey == "" && (entry.FormID == "" || entry.Name == "") {
