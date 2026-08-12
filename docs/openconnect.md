@@ -24,6 +24,8 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
   prevents the tunnel's private resolver from recursively resolving itself.
 - `dtls-mode: auto` prefers DTLS and falls back to CSTP. `require` fails closed
   if DTLS becomes unavailable; `off` uses CSTP only.
+- `compression` defaults to `stateless`, matching OpenConnect. This negotiates
+  per-packet `oc-lz4` or `lzs`; use `off` to disable compression explicitly.
 - `dtls-key-exchange: auto` preserves the broadest gateway compatibility and
   lets a PSK-capable server select modern PSK negotiation. `resumption` omits
   that offer and requests injected session resumption, which can substantially

@@ -110,7 +110,7 @@ func TestClientPublishesCallerOwnedNetworkConfiguration(t *testing.T) {
 	}
 }
 
-func TestClientIgnoresInvalidBoundedStatelessCompression(t *testing.T) {
+func TestClientDefaultStatelessCompressionIgnoresInvalidBoundedFrames(t *testing.T) {
 	largePacket := make([]byte, 64*1024)
 	compressed := make([]byte, lz4.CompressBlockBound(len(largePacket)))
 	compressor := new(lz4.Compressor)
@@ -142,7 +142,6 @@ func TestClientIgnoresInvalidBoundedStatelessCompression(t *testing.T) {
 		Cookie:               scenario.Cookie,
 		ServerName:           gateway.ServerName(),
 		CertificateAuthority: testanyconnect.RootCAPEM(),
-		Compression:          CompressionStateless,
 	}, new(recordingDialer), nil)
 	if err != nil {
 		t.Fatal(err)
