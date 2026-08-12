@@ -37,6 +37,10 @@ type anyConnectGeneration struct {
 	closed          atomic.Bool
 }
 
+type anyConnectGRODevice interface {
+	WriteGRO(bufs [][]byte, offset int) (count int, err error)
+}
+
 func (g *anyConnectGeneration) writePacket(packet []byte, expectedRevision uint64) (bool, error) {
 	return g.writePackets([][]byte{packet}, expectedRevision)
 }
@@ -47,7 +51,13 @@ func (g *anyConnectGeneration) writePackets(packets [][]byte, expectedRevision u
 	if g.closed.Load() || g.revision != expectedRevision {
 		return false, nil
 	}
-	written, err := g.device.Write(packets, 0)
+	var written int
+	var err error
+	if groDevice, loaded := g.device.(anyConnectGRODevice); loaded && len(packets) > 1 {
+		written, err = groDevice.WriteGRO(packets, 0)
+	} else {
+		written, err = g.device.Write(packets, 0)
+	}
 	if err == nil && written != len(packets) {
 		err = io.ErrShortWrite
 	}
