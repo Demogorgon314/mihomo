@@ -62,6 +62,10 @@ type OpenConnectOption struct {
 	Cert                           string           `proxy:"cert,omitempty"`
 	Key                            string           `proxy:"key,omitempty"`
 	KeyPassword                    string           `proxy:"key-password,omitempty"`
+	MCACertificate                 string           `proxy:"mca-certificate,omitempty"`
+	MCAKey                         string           `proxy:"mca-key,omitempty"`
+	MCAKeyPassword                 string           `proxy:"mca-key-password,omitempty"`
+	CertExpireWarning              *int             `proxy:"cert-expire-warning,omitempty"`
 	ServerName                     string           `proxy:"server-name,omitempty"`
 	PeerFingerprint                string           `proxy:"peer-fingerprint,omitempty"`
 	PeerFingerprints               []string         `proxy:"peer-fingerprints,omitempty"`
@@ -132,6 +136,22 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 	if option.DTLSLocalPort < 0 || option.DTLSLocalPort > 65535 {
 		return nil, errors.New("openconnect DTLS local port must be between 0 and 65535")
 	}
+	var certificateExpiryWarning time.Duration
+	certificateExpiryWarningDisabled := false
+	if option.CertExpireWarning != nil {
+		if *option.CertExpireWarning < 0 {
+			return nil, errors.New("openconnect certificate expiry warning must be non-negative")
+		}
+		maximumDays := int64((time.Duration(1<<63 - 1)) / (24 * time.Hour))
+		if int64(*option.CertExpireWarning) > maximumDays {
+			return nil, errors.New("openconnect certificate expiry warning is too large")
+		}
+		if *option.CertExpireWarning == 0 {
+			certificateExpiryWarningDisabled = true
+		} else {
+			certificateExpiryWarning = time.Duration(*option.CertExpireWarning) * 24 * time.Hour
+		}
+	}
 	if option.QueueLength > oc.MaximumQueueLength {
 		return nil, fmt.Errorf("openconnect packet queue length must not exceed %d", oc.MaximumQueueLength)
 	}
@@ -144,45 +164,50 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 	legacyDTLSDisabled := option.LegacyDTLS != nil && !*option.LegacyDTLS
 	address := net.JoinHostPort(option.Server, fmt.Sprint(option.Port))
 	config := oc.Config{
-		Server:                         "https://" + address,
-		Protocol:                       option.Protocol,
-		Cookie:                         option.Cookie,
-		Username:                       option.Username,
-		Password:                       option.Password,
-		AuthGroup:                      option.AuthGroup,
-		ReportedOS:                     option.ReportedOS,
-		UserAgent:                      option.UserAgent,
-		Version:                        option.Version,
-		LocalHostname:                  option.LocalHostname,
-		Mobile:                         option.Mobile,
-		FormEntries:                    option.FormEntries,
-		ServerName:                     option.ServerName,
-		CertificateAuthority:           []byte(option.CA),
-		ClientCertificate:              []byte(option.Cert),
-		ClientKey:                      []byte(option.Key),
-		ClientKeyPassword:              option.KeyPassword,
-		PeerFingerprint:                option.PeerFingerprint,
-		PeerFingerprints:               option.PeerFingerprints,
-		SystemTrustDisabled:            option.SystemTrustDisabled,
-		SkipCertVerify:                 option.SkipCertVerify,
-		HTTPKeepAliveDisabled:          option.HTTPKeepAliveDisabled,
-		XMLPostDisabled:                option.XMLPostDisabled,
-		ExternalAuthDisabled:           option.ExternalAuthDisabled,
-		PasswordAuthenticationDisabled: option.PasswordAuthenticationDisabled,
-		PFS:                            option.PFS,
-		AllowInsecureCrypto:            option.AllowInsecureCrypto,
-		MTU:                            uint32(option.MTU),
-		BaseMTU:                        uint32(option.BaseMTU),
-		IPv6Disabled:                   option.IPv6Disabled,
-		Compression:                    option.Compression,
-		QueueLength:                    option.QueueLength,
-		DPDInterval:                    time.Duration(option.DPDInterval) * time.Second,
-		ReconnectTimeout:               time.Duration(option.ReconnectTimeout) * time.Second,
-		DTLSMode:                       option.DTLSMode,
-		DTLSKeyExchange:                option.DTLSKeyExchange,
-		LegacyDTLSDisabled:             legacyDTLSDisabled,
-		DTLSLocalPort:                  uint16(option.DTLSLocalPort),
-		Logger:                         log.SingLogger,
+		Server:                           "https://" + address,
+		Protocol:                         option.Protocol,
+		Cookie:                           option.Cookie,
+		Username:                         option.Username,
+		Password:                         option.Password,
+		AuthGroup:                        option.AuthGroup,
+		ReportedOS:                       option.ReportedOS,
+		UserAgent:                        option.UserAgent,
+		Version:                          option.Version,
+		LocalHostname:                    option.LocalHostname,
+		Mobile:                           option.Mobile,
+		FormEntries:                      option.FormEntries,
+		ServerName:                       option.ServerName,
+		CertificateAuthority:             []byte(option.CA),
+		ClientCertificate:                []byte(option.Cert),
+		ClientKey:                        []byte(option.Key),
+		ClientKeyPassword:                option.KeyPassword,
+		MCACertificate:                   []byte(option.MCACertificate),
+		MCAKey:                           []byte(option.MCAKey),
+		MCAKeyPassword:                   option.MCAKeyPassword,
+		CertificateExpiryWarning:         certificateExpiryWarning,
+		CertificateExpiryWarningDisabled: certificateExpiryWarningDisabled,
+		PeerFingerprint:                  option.PeerFingerprint,
+		PeerFingerprints:                 option.PeerFingerprints,
+		SystemTrustDisabled:              option.SystemTrustDisabled,
+		SkipCertVerify:                   option.SkipCertVerify,
+		HTTPKeepAliveDisabled:            option.HTTPKeepAliveDisabled,
+		XMLPostDisabled:                  option.XMLPostDisabled,
+		ExternalAuthDisabled:             option.ExternalAuthDisabled,
+		PasswordAuthenticationDisabled:   option.PasswordAuthenticationDisabled,
+		PFS:                              option.PFS,
+		AllowInsecureCrypto:              option.AllowInsecureCrypto,
+		MTU:                              uint32(option.MTU),
+		BaseMTU:                          uint32(option.BaseMTU),
+		IPv6Disabled:                     option.IPv6Disabled,
+		Compression:                      option.Compression,
+		QueueLength:                      option.QueueLength,
+		DPDInterval:                      time.Duration(option.DPDInterval) * time.Second,
+		ReconnectTimeout:                 time.Duration(option.ReconnectTimeout) * time.Second,
+		DTLSMode:                         option.DTLSMode,
+		DTLSKeyExchange:                  option.DTLSKeyExchange,
+		LegacyDTLSDisabled:               legacyDTLSDisabled,
+		DTLSLocalPort:                    uint16(option.DTLSLocalPort),
+		Logger:                           log.SingLogger,
 	}
 	if option.TokenMode != "" || option.TokenSecret != "" || option.TokenCounter != 0 || option.TokenCounterUpdate != nil {
 		config.Token = &oc.TokenConfig{
