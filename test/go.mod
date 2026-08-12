@@ -17,6 +17,8 @@ replace github.com/pion/dtls/v3 => github.com/Demogorgon314/dtls/v3 v3.1.6-0.202
 
 replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-openconnect v0.0.0-20260811215223-3fe653b3a272
 
+replace github.com/metacubex/sing-wireguard => github.com/Demogorgon314/sing-wireguard v0.0.0-20260812031228-acea56066efb
+
 require (
 	github.com/Microsoft/go-winio v0.6.0 // indirect
 	github.com/RyuaNerin/go-krypto v1.3.0 // indirect

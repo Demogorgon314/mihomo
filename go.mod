@@ -165,3 +165,5 @@ replace google.golang.org/protobuf => github.com/metacubex/protobuf-go v0.0.0-20
 replace github.com/pion/dtls/v3 => github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811215135-eef76e0def3f
 
 replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-openconnect v0.0.0-20260811215223-3fe653b3a272
+
+replace github.com/metacubex/sing-wireguard => github.com/Demogorgon314/sing-wireguard v0.0.0-20260812031228-acea56066efb

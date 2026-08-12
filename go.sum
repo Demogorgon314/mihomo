@@ -2,6 +2,8 @@ github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811215135-eef76e0def3f h1:xfdgezY
 github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260811215135-eef76e0def3f/go.mod h1:gz1K4jg6c+fq86oQMH4pilpCEOEPwmEr2jY+VcF/mkU=
 github.com/Demogorgon314/sing-openconnect v0.0.0-20260811215223-3fe653b3a272 h1:ivvzLUZyu4HwPIedeLBMe/ZBlkboIY4ROogP+7DyuPQ=
 github.com/Demogorgon314/sing-openconnect v0.0.0-20260811215223-3fe653b3a272/go.mod h1:eNk/n7LBwdHXUyx7rC0WOnPa7KhUfRHse4iPEK/mlu0=
+github.com/Demogorgon314/sing-wireguard v0.0.0-20260812031228-acea56066efb h1:oMcEXjLfBicp7WeWyFXwbKht9HwWq0PmHmfYyQ25m80=
+github.com/Demogorgon314/sing-wireguard v0.0.0-20260812031228-acea56066efb/go.mod h1:eQZDJTx+IH3k4mXqaOJ3VJ9h9ZqOl60F7TLi5wAU51Q=
 github.com/RyuaNerin/go-krypto v1.3.0 h1:smavTzSMAx8iuVlGb4pEwl9MD2qicqMzuXR2QWp2/Pg=
 github.com/RyuaNerin/go-krypto v1.3.0/go.mod h1:9R9TU936laAIqAmjcHo/LsaXYOZlymudOAxjaBf62UM=
 github.com/RyuaNerin/testingutil v0.1.0 h1:IYT6JL57RV3U2ml3dLHZsVtPOP6yNK7WUVdzzlpNrss=
@@ -187,8 +189,6 @@ github.com/metacubex/sing-tun v0.4.21 h1:MjbPYytM240VH70lO182v2Sg/JthMmx6R6z6E2f
 github.com/metacubex/sing-tun v0.4.21/go.mod h1:g4I/JNplDBhXLF+aQWgFbhNeJPSXQOWS9HvLeNvkgeA=
 github.com/metacubex/sing-vmess v0.2.5 h1:m9Zt5I27lB9fmLMZfism9sH2LcnAfShZfwSkf6/KJoE=
 github.com/metacubex/sing-vmess v0.2.5/go.mod h1:AwtlzUgf8COe9tRYAKqWZ+leDH7p5U98a0ZUpYehl8Q=
-github.com/metacubex/sing-wireguard v0.0.0-20260520151737-7e7c7c1b854c h1:tH9FuQW357zp2xAGzkoZTGpNGMVmEFZov0iV5M2S5ew=
-github.com/metacubex/sing-wireguard v0.0.0-20260520151737-7e7c7c1b854c/go.mod h1:eQZDJTx+IH3k4mXqaOJ3VJ9h9ZqOl60F7TLi5wAU51Q=
 github.com/metacubex/smux v0.0.0-20260105030934-d0c8756d3141 h1:DK2l6m2Fc85H2BhiAPgbJygiWhesPlfGmF+9Vw6ARdk=
 github.com/metacubex/smux v0.0.0-20260105030934-d0c8756d3141/go.mod h1:/yI4OiGOSn0SURhZdJF3CbtPg3nwK700bG8TZLMBvAg=
 github.com/metacubex/ssh v0.1.0 h1:iGfr99qk/eMHzUnQ/0bTxXT8+8SWqLSHBWDHoAhngzw=
