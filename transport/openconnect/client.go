@@ -108,7 +108,7 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	if len(config.CertificateAuthority) > 0 && !x509.NewCertPool().AppendCertsFromPEM(config.CertificateAuthority) {
 		return nil, invalidConfig("certificate authority is not valid PEM")
 	}
-	underlay, err := newSingDialer(dialer)
+	underlay, err := newSingDialer(dialer, config.DTLSLocalPort)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +140,22 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 			SubmissionKey: entry.SubmissionKey,
 			Name:          entry.Name,
 			Value:         entry.Value,
+			Promote:       entry.Promote,
 		})
+	}
+	var mobileOptions *openconnect.MobileOptions
+	if config.Mobile != nil {
+		mobileOptions = &openconnect.MobileOptions{
+			PlatformVersion: config.Mobile.PlatformVersion,
+			DeviceType:      config.Mobile.DeviceType,
+			DeviceUniqueID:  config.Mobile.DeviceUniqueID,
+		}
+	} else if config.ReportedOS == "android" || config.ReportedOS == "apple-ios" {
+		mobileOptions = &openconnect.MobileOptions{
+			PlatformVersion: "1.0",
+			DeviceType:      config.ReportedOS,
+			DeviceUniqueID:  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		}
 	}
 	var tokenOptions *openconnect.TokenOptions
 	if config.Token != nil {
@@ -190,9 +205,11 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		UserAgent:                      config.UserAgent,
 		Version:                        config.Version,
 		LocalHostname:                  config.LocalHostname,
+		Mobile:                         mobileOptions,
 		NoUDP:                          normalizeDTLSMode(config.DTLSMode) == DTLSModeOff,
 		DTLSRequired:                   normalizeDTLSMode(config.DTLSMode) == DTLSModeRequire,
 		LegacyDTLSDisabled:             config.LegacyDTLSDisabled,
+		DTLSLocalPort:                  config.DTLSLocalPort,
 		DTLSCipherSuites:               dtlsCipherSuites,
 		DTLS12CipherSuites:             dtls12CipherSuites,
 		CompressionDisabled:            compressionDisabled,

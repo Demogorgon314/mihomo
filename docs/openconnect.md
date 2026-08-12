@@ -46,6 +46,13 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
 - `legacy-dtls` defaults to `true`, matching OpenConnect compatibility behavior.
   Set it to `false` to prevent negotiation of Cisco DTLS 0.9 and its deprecated
   MD5/SHA-1/AES-CBC cryptography.
+- `dtls-local-port` binds the DTLS underlay to a fixed local UDP port; `0`
+  lets the operating system select one. IPv4 and IPv6 use their corresponding
+  wildcard bind address while preserving mihomo's interface and routing-mark
+  policy.
+- `reported-os: android` and `apple-ios` use OpenConnect-compatible generic
+  mobile identity fields when `mobile` is omitted. Configure all three nested
+  mobile fields to override them.
 - `pfs: true` rejects non-forward-secret TLS cipher suites.
   `allow-insecure-crypto: true` enables legacy TLS and cipher compatibility and
   should only be used for gateways that cannot negotiate modern cryptography.

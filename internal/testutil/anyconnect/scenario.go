@@ -30,6 +30,7 @@ type NetworkConfiguration struct {
 type CSTPFaults struct {
 	RejectStatus           int
 	ResponseChunkSize      int
+	ExpectedRequestHeaders map[string]string
 	MalformedDataHeader    bool
 	BlackholeDPD           bool
 	CompressedPackets      [][]byte
