@@ -16,6 +16,7 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
 - Use `type: openconnect`. `protocol` defaults to `anyconnect`, which is the
   only protocol currently supported. The former `type: anyconnect` spelling is
   intentionally not accepted.
+- `port` defaults to `443`.
 - `ca`, `peer-fingerprint`, and `skip-cert-verify` are mutually exclusive.
   When none is configured, TLS verification uses the system CA roots.
 - `cert` and `key` must be configured together. Encrypted keys also require the
@@ -28,6 +29,12 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
   per-packet `oc-lz4` or `lzs`; use `off` to disable compression explicitly.
 - IPv6 is enabled by default, matching OpenConnect. Set `ipv6-disabled: true`
   to request and use IPv4 tunnel configuration only.
+- `base-mtu: 0` probes the CSTP TCP socket for the path MTU (or TCP MSS)
+  and falls back to `1406` when the socket does not expose that information.
+- `handshake-timeout` defaults to `0`, so mihomo does not impose one deadline
+  across authentication and tunnel startup. Individual network and protocol
+  operations remain bounded; set a positive number of seconds to add an overall
+  deadline.
 - `dtls-key-exchange` defaults to `auto`, matching OpenConnect by advertising
   the supported PSK, injected-resumption, and compatibility suites and letting
   the gateway select. `resumption` narrows the offer to injected AES-GCM session

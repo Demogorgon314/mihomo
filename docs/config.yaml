@@ -1356,7 +1356,7 @@ proxies: # socks5
     type: openconnect
     protocol: anyconnect # currently the only supported protocol; omitted defaults to anyconnect
     server: vpn.example.com
-    port: 443
+    # port: 443 # defaults to 443
     # cookie: webvpn-cookie # use a pre-authenticated cookie, or configure username/password
     username: user
     password: pass
@@ -1383,9 +1383,9 @@ proxies: # socks5
     # compression: stateless # off, stateless, or all; defaults to stateless
     # ipv6-disabled: false # IPv6 is enabled by default
     # mtu: 0 # 0 uses the gateway value; IPv6 requires at least 1280
-    # base-mtu: 0
+    # base-mtu: 0 # 0 probes the CSTP TCP path MTU/MSS and falls back to 1406
     # queue-length: 0 # 0 uses the default; maximum 4096
-    # handshake-timeout: 0 # seconds
+    # handshake-timeout: 0 # overall authentication/tunnel startup timeout in seconds; 0 disables the overall timeout
     # dpd-interval: 0 # seconds
     # reconnect-timeout: 0 # seconds
     # remote-dns-resolve: false
