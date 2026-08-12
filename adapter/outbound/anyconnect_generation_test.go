@@ -134,12 +134,22 @@ func (c *incomingBatchTestClient) ReadPacketsWithRevision(ctx context.Context) (
 
 type incomingBatchTestDevice struct {
 	wireguard.Device
-	writes chan [][]byte
-	calls  atomic.Int32
+	writes   chan [][]byte
+	calls    atomic.Int32
+	groCalls atomic.Int32
 }
 
 func (d *incomingBatchTestDevice) Write(packets [][]byte, _ int) (int, error) {
 	d.calls.Add(1)
+	return d.recordWrite(packets)
+}
+
+func (d *incomingBatchTestDevice) WriteGRO(packets [][]byte, _ int) (int, error) {
+	d.groCalls.Add(1)
+	return d.recordWrite(packets)
+}
+
+func (d *incomingBatchTestDevice) recordWrite(packets [][]byte) (int, error) {
 	values := make([][]byte, len(packets))
 	for index, packet := range packets {
 		values[index] = slices.Clone(packet)
@@ -180,7 +190,7 @@ func (c *outboundBatchTestClient) WritePacketsAtRevision(packets [][]byte, _ uin
 func (*outboundBatchTestClient) ActiveTransport() string { return "dtls" }
 func (*outboundBatchTestClient) Close() error            { return nil }
 
-func TestAnyConnectStackPacketsWriteIndividually(t *testing.T) {
+func TestAnyConnectStackPacketsUseBoundedBatches(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	device := &outboundBatchTestDevice{packets: make(chan []byte, 3)}
@@ -209,15 +219,20 @@ func TestAnyConnectStackPacketsWriteIndividually(t *testing.T) {
 	device.packets <- []byte{1}
 	device.packets <- []byte{2}
 	device.packets <- []byte{3}
-	for expected := byte(1); expected <= 3; expected++ {
+	var written []byte
+	for len(written) < 3 {
 		select {
 		case values := <-client.batches:
-			if !slices.Equal(values, []byte{expected}) {
-				t.Fatalf("unexpected write: %v", values)
+			if len(values) == 0 || len(values) > anyConnectOutboundPacketBatchSize {
+				t.Fatalf("unexpected batch size %d", len(values))
 			}
+			written = append(written, values...)
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
 		}
+	}
+	if !slices.Equal(written, []byte{1, 2, 3}) {
+		t.Fatalf("unexpected packet order: %v", written)
 	}
 
 	session.access.Lock()
@@ -276,8 +291,11 @@ func TestAnyConnectTunnelPacketsWriteOneDeviceBatch(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if calls := device.calls.Load(); calls != 1 {
-		t.Fatalf("expected one device batch write, got %d", calls)
+	if calls := device.groCalls.Load(); calls != 1 {
+		t.Fatalf("expected one GRO device batch write, got %d", calls)
+	}
+	if calls := device.calls.Load(); calls != 0 {
+		t.Fatalf("unexpected ordinary device writes: %d", calls)
 	}
 }
 
