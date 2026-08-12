@@ -205,6 +205,7 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		TLSConfig:           tlsOptions,
 		FormEntries:         formEntries,
 		Dialer:              underlay,
+		Logger:              config.Logger,
 		OnAuthenticationRejected: func(context.Context) {
 			client.rejectAuthentication()
 		},
