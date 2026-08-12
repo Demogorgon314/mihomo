@@ -102,7 +102,10 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	if ctx == nil {
 		return nil, invalidConfig("context is required")
 	}
-	if err := validateClientCertificate(config.ClientCertificate); err != nil {
+	if err := validateClientCertificate(config.ClientCertificate, "client certificate"); err != nil {
+		return nil, err
+	}
+	if err := validateClientCertificate(config.MCACertificate, "MCA certificate"); err != nil {
 		return nil, err
 	}
 	if len(config.CertificateAuthority) > 0 && !x509.NewCertPool().AppendCertsFromPEM(config.CertificateAuthority) {
@@ -125,13 +128,18 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	}
 	peerFingerprints = append(peerFingerprints, config.PeerFingerprints...)
 	tlsOptions := openconnect.ClientTLSOptions{
-		Config:               tlsConfig,
-		CertificateAuthority: openconnect.Material{Content: append([]byte(nil), config.CertificateAuthority...)},
-		Certificate:          openconnect.Material{Content: append([]byte(nil), config.ClientCertificate...)},
-		Key:                  openconnect.Material{Content: append([]byte(nil), config.ClientKey...)},
-		KeyPassword:          config.ClientKeyPassword,
-		PeerFingerprints:     peerFingerprints,
-		SystemTrustDisabled:  config.SystemTrustDisabled || config.SkipCertVerify,
+		Config:                           tlsConfig,
+		CertificateAuthority:             openconnect.Material{Content: append([]byte(nil), config.CertificateAuthority...)},
+		Certificate:                      openconnect.Material{Content: append([]byte(nil), config.ClientCertificate...)},
+		Key:                              openconnect.Material{Content: append([]byte(nil), config.ClientKey...)},
+		KeyPassword:                      config.ClientKeyPassword,
+		MCACertificate:                   openconnect.Material{Content: append([]byte(nil), config.MCACertificate...)},
+		MCAKey:                           openconnect.Material{Content: append([]byte(nil), config.MCAKey...)},
+		MCAKeyPassword:                   config.MCAKeyPassword,
+		CertificateExpiryWarning:         config.CertificateExpiryWarning,
+		CertificateExpiryWarningDisabled: config.CertificateExpiryWarningDisabled,
+		PeerFingerprints:                 peerFingerprints,
+		SystemTrustDisabled:              config.SystemTrustDisabled || config.SkipCertVerify,
 	}
 	formEntries := make([]openconnect.FormEntry, 0, len(config.FormEntries))
 	for _, entry := range config.FormEntries {
@@ -248,21 +256,21 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	return client, nil
 }
 
-func validateClientCertificate(content []byte) error {
+func validateClientCertificate(content []byte, description string) error {
 	if len(content) == 0 {
 		return nil
 	}
 	block, _ := pem.Decode(content)
 	if block == nil || block.Type != "CERTIFICATE" {
-		return newTerminalError(ErrTLSRejected, "openconnect client certificate is not valid PEM")
+		return newTerminalError(ErrTLSRejected, "openconnect "+description+" is not valid PEM")
 	}
 	certificate, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return newTerminalError(ErrTLSRejected, "openconnect client certificate is invalid")
+		return newTerminalError(ErrTLSRejected, "openconnect "+description+" is invalid")
 	}
 	now := time.Now()
 	if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
-		return newTerminalError(ErrTLSRejected, "openconnect client certificate is not currently valid")
+		return newTerminalError(ErrTLSRejected, "openconnect "+description+" is not currently valid")
 	}
 	return nil
 }
@@ -730,7 +738,14 @@ func (c *Client) publishEvent(event Event) {
 }
 
 func configSecrets(config Config) []string {
-	secrets := []string{config.Cookie, config.Password, config.ClientKeyPassword, string(config.ClientKey)}
+	secrets := []string{
+		config.Cookie,
+		config.Password,
+		config.ClientKeyPassword,
+		string(config.ClientKey),
+		config.MCAKeyPassword,
+		string(config.MCAKey),
+	}
 	if config.Token != nil {
 		secrets = append(secrets, config.Token.Secret)
 	}

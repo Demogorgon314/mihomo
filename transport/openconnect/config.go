@@ -51,47 +51,52 @@ type MobileConfig struct {
 // Config contains the protocol, authentication, and TLS settings owned by the
 // mihomo façade. All byte slices and form entries are copied before use.
 type Config struct {
-	Server                         string
-	Protocol                       string
-	Cookie                         string
-	Username                       string
-	Password                       string
-	AuthGroup                      string
-	ReportedOS                     string
-	UserAgent                      string
-	Version                        string
-	LocalHostname                  string
-	Mobile                         *MobileConfig
-	FormEntries                    []FormEntry
-	Token                          *TokenConfig
-	ServerName                     string
-	CertificateAuthority           []byte
-	ClientCertificate              []byte
-	ClientKey                      []byte
-	ClientKeyPassword              string
-	PeerFingerprint                string
-	PeerFingerprints               []string
-	SystemTrustDisabled            bool
-	SkipCertVerify                 bool
-	HTTPKeepAliveDisabled          bool
-	XMLPostDisabled                bool
-	ExternalAuthDisabled           bool
-	PasswordAuthenticationDisabled bool
-	PFS                            bool
-	AllowInsecureCrypto            bool
-	MTU                            uint32
-	BaseMTU                        uint32
-	IPv6Disabled                   bool
-	Compression                    string
-	DTLSMode                       string
-	DTLSKeyExchange                string
-	LegacyDTLSDisabled             bool
-	DTLSLocalPort                  uint16
-	DPDInterval                    time.Duration
-	ReconnectTimeout               time.Duration
-	QueueLength                    uint32
-	Logger                         logger.ContextLogger
-	OnNetworkConfig                func(event NetworkConfigEvent) error
+	Server                           string
+	Protocol                         string
+	Cookie                           string
+	Username                         string
+	Password                         string
+	AuthGroup                        string
+	ReportedOS                       string
+	UserAgent                        string
+	Version                          string
+	LocalHostname                    string
+	Mobile                           *MobileConfig
+	FormEntries                      []FormEntry
+	Token                            *TokenConfig
+	ServerName                       string
+	CertificateAuthority             []byte
+	ClientCertificate                []byte
+	ClientKey                        []byte
+	ClientKeyPassword                string
+	MCACertificate                   []byte
+	MCAKey                           []byte
+	MCAKeyPassword                   string
+	CertificateExpiryWarning         time.Duration
+	CertificateExpiryWarningDisabled bool
+	PeerFingerprint                  string
+	PeerFingerprints                 []string
+	SystemTrustDisabled              bool
+	SkipCertVerify                   bool
+	HTTPKeepAliveDisabled            bool
+	XMLPostDisabled                  bool
+	ExternalAuthDisabled             bool
+	PasswordAuthenticationDisabled   bool
+	PFS                              bool
+	AllowInsecureCrypto              bool
+	MTU                              uint32
+	BaseMTU                          uint32
+	IPv6Disabled                     bool
+	Compression                      string
+	DTLSMode                         string
+	DTLSKeyExchange                  string
+	LegacyDTLSDisabled               bool
+	DTLSLocalPort                    uint16
+	DPDInterval                      time.Duration
+	ReconnectTimeout                 time.Duration
+	QueueLength                      uint32
+	Logger                           logger.ContextLogger
+	OnNetworkConfig                  func(event NetworkConfigEvent) error
 }
 
 // ValidateConfig validates configuration without opening a network connection.
@@ -175,6 +180,18 @@ func (c Config) validate(hasAuthProvider bool) error {
 	}
 	if c.ClientKeyPassword != "" && len(c.ClientKey) == 0 {
 		return invalidConfig("client key password requires a client key")
+	}
+	if (len(c.MCACertificate) == 0) != (len(c.MCAKey) == 0) {
+		return invalidConfig("MCA certificate and key must be configured together")
+	}
+	if c.MCAKeyPassword != "" && len(c.MCAKey) == 0 {
+		return invalidConfig("MCA key password requires an MCA key")
+	}
+	if c.CertificateExpiryWarning < 0 {
+		return invalidConfig("certificate expiry warning must be non-negative")
+	}
+	if c.CertificateExpiryWarningDisabled && c.CertificateExpiryWarning != 0 {
+		return invalidConfig("certificate expiry warning cannot be configured and disabled together")
 	}
 	if c.Token != nil {
 		if c.Token.Mode != TokenModeTOTP && c.Token.Mode != TokenModeHOTP {
