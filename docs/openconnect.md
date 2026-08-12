@@ -1,9 +1,9 @@
-# AnyConnect outbound
+# OpenConnect outbound
 
-The AnyConnect outbound is a pure-Go, userspace L3 client. It does not create an
-OS TUN device or change system routes. Protocol handling comes from the pinned
-`Demogorgon314/sing-openconnect` fork; mihomo owns configuration, policy,
-underlay dialing, DNS, and the userspace TCP/UDP stack.
+The OpenConnect outbound is a pure-Go, userspace L3 client. It does not create
+an OS TUN device or change system routes. Protocol handling comes from the
+pinned `Demogorgon314/sing-openconnect` fork; mihomo owns configuration,
+policy, underlay dialing, DNS, and the userspace TCP/UDP stack.
 
 This outbound is experimental until the capabilities used by a deployment pass
 the real Cisco gateway checks described below. Passing the fake gateway and
@@ -13,6 +13,9 @@ ocserv suites alone does not make modern or legacy DTLS a supported capability.
 
 See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
 
+- Use `type: openconnect`. `protocol` defaults to `anyconnect`, which is the
+  only protocol currently supported. The former `type: anyconnect` spelling is
+  intentionally not accepted.
 - `ca`, `peer-fingerprint`, and `skip-cert-verify` are mutually exclusive.
   When none is configured, TLS verification uses the system CA roots.
 - `cert` and `key` must be configured together. Encrypted keys also require the
@@ -44,7 +47,7 @@ external debug logging that records TLS plaintext in production.
 ## Errors and retry behavior
 
 The transport façade wraps its validation and client-construction failures with
-`anyconnect.ErrInvalidConfig`. The outbound also rejects invalid name, server,
+`openconnect.ErrInvalidConfig`. The outbound also rejects invalid name, server,
 port, cookie, timeout, MTU, queue, DNS, and DTLS fields before dialing with a
 descriptive error; these parser-level errors do not all share that category.
 The façade exposes stable categories for authentication, TLS verification,
@@ -76,7 +79,7 @@ or IPv6 health.
 With `dtls-mode: auto`, a URLTest can remain healthy after DTLS falls back to
 CSTP. Standard outbound users cannot infer the active transport from URLTest;
 use capability test artifacts instead. Programs that directly embed the
-`transport/anyconnect` façade may subscribe to its active-transport event. With
+`transport/openconnect` façade may subscribe to its active-transport event. With
 `dtls-mode: require`, loss of DTLS ends the session and subsequent health checks
 fail with the required-DTLS category.
 
@@ -104,7 +107,7 @@ with a regression fix.
 For local diagnosis, start with:
 
 ```sh
-go test -race -tags=with_gvisor ./transport/anyconnect ./adapter/outbound ./internal/testutil/anyconnect
+go test -race -tags=with_gvisor ./transport/openconnect ./adapter/outbound ./internal/testutil/anyconnect
 go test -tags=anyconnect_ocserv,with_gvisor ./internal/testutil/anyconnect -run '^TestOCServFixture$' -v
 ```
 

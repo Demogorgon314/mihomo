@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"context"
@@ -95,7 +95,7 @@ type Client struct {
 	closeErr             error
 }
 
-// NewClient creates an AnyConnect protocol client with CSTP fallback.
+// NewClient creates an OpenConnect client for the configured VPN protocol.
 func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider AuthProvider) (*Client, error) {
 	if err := ValidateConfig(config, authProvider); err != nil {
 		return nil, err
@@ -184,6 +184,7 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 	core, err := openconnect.NewClient(openconnect.ClientOptions{
 		Context:             ctx,
 		Server:              config.Server,
+		Flavor:              normalizeProtocol(config.Protocol),
 		Cookie:              normalizeCookie(config.Cookie),
 		Username:            config.Username,
 		Password:            config.Password,
@@ -230,15 +231,15 @@ func validateClientCertificate(content []byte) error {
 	}
 	block, _ := pem.Decode(content)
 	if block == nil || block.Type != "CERTIFICATE" {
-		return newTerminalError(ErrTLSRejected, "anyconnect client certificate is not valid PEM")
+		return newTerminalError(ErrTLSRejected, "openconnect client certificate is not valid PEM")
 	}
 	certificate, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return newTerminalError(ErrTLSRejected, "anyconnect client certificate is invalid")
+		return newTerminalError(ErrTLSRejected, "openconnect client certificate is invalid")
 	}
 	now := time.Now()
 	if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
-		return newTerminalError(ErrTLSRejected, "anyconnect client certificate is not currently valid")
+		return newTerminalError(ErrTLSRejected, "openconnect client certificate is not currently valid")
 	}
 	return nil
 }

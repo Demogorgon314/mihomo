@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 type EventType string
 

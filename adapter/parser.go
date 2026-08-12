@@ -209,13 +209,13 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 			break
 		}
 		proxy, err = outbound.NewTailscale(*tailscaleOption)
-	case "anyconnect":
-		anyConnectOption := &outbound.AnyConnectOption{BasicOption: basicOption}
-		err = decoder.Decode(mapping, anyConnectOption)
+	case "openconnect":
+		openConnectOption := &outbound.OpenConnectOption{BasicOption: basicOption}
+		err = decoder.Decode(mapping, openConnectOption)
 		if err != nil {
 			break
 		}
-		proxy, err = outbound.NewAnyConnect(*anyConnectOption)
+		proxy, err = outbound.NewOpenConnect(*openConnectOption)
 	default:
 		return nil, fmt.Errorf("unsupport proxy type: %s", proxyType)
 	}

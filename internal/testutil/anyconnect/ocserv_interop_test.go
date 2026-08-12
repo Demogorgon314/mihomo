@@ -93,7 +93,7 @@ func BenchmarkOCServAnyConnectDataPlaneE2E(b *testing.B) {
 	}
 	proxy, err := adapter.ParseProxy(map[string]any{
 		"name":              "ocserv-anyconnect-benchmark",
-		"type":              "anyconnect",
+		"type":              "openconnect",
 		"server":            fakeGatewayServerName,
 		"port":              port,
 		"cookie":            cookie,
@@ -586,7 +586,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 	}
 	proxy, err := adapter.ParseProxy(map[string]any{
 		"name":        "ocserv-anyconnect",
-		"type":        "anyconnect",
+		"type":        "openconnect",
 		"server":      fakeGatewayServerName,
 		"port":        port,
 		"cookie":      cookie,
@@ -648,7 +648,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 	testOCServDTLSOutbound(t, ctx, tcpAddress, udpAddress, port, roots, certificatePEM, target)
 	authenticatedProxy, err := adapter.ParseProxy(map[string]any{
 		"name":        "ocserv-anyconnect-authenticated",
-		"type":        "anyconnect",
+		"type":        "openconnect",
 		"server":      fakeGatewayServerName,
 		"port":        port,
 		"username":    ocservUsername,
@@ -710,7 +710,7 @@ func testOCServDTLSOutbound(t *testing.T, ctx context.Context, tcpAddress string
 	}
 	proxy, err := adapter.ParseProxy(map[string]any{
 		"name":        "ocserv-anyconnect-dtls",
-		"type":        "anyconnect",
+		"type":        "openconnect",
 		"server":      fakeGatewayServerName,
 		"port":        port,
 		"cookie":      cookie,

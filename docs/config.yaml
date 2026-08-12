@@ -1351,9 +1351,10 @@ proxies: # socks5
     # routing-mark: 6666 # Linux 下配置 fwmark
     # ip-version: ipv4-prefer # 可选：dual/ipv4/ipv6/ipv4-prefer/ipv6-prefer
 
-  # anyconnect (experimental until the selected capabilities pass a real Cisco gateway test; operations: docs/anyconnect.md)
-  - name: "anyconnect"
-    type: anyconnect
+  # openconnect
+  - name: "openconnect"
+    type: openconnect
+    protocol: anyconnect # currently the only supported protocol; omitted defaults to anyconnect
     server: vpn.example.com
     port: 443
     # cookie: webvpn-cookie # use a pre-authenticated cookie, or configure username/password

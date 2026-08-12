@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"context"
@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	TokenModeTOTP = "totp"
-	TokenModeHOTP = "hotp"
+	ProtocolAnyConnect = "anyconnect"
+	TokenModeTOTP      = "totp"
+	TokenModeHOTP      = "hotp"
 
 	CompressionOff            = "off"
 	CompressionStateless      = "stateless"
@@ -44,6 +45,7 @@ type FormEntry struct {
 // mihomo façade. All byte slices and form entries are copied before use.
 type Config struct {
 	Server               string
+	Protocol             string
 	Cookie               string
 	Username             string
 	Password             string
@@ -76,6 +78,13 @@ func ValidateConfig(config Config, authProvider AuthProvider) error {
 	return config.validate(authProvider != nil)
 }
 
+func normalizeProtocol(protocol string) string {
+	if protocol == "" {
+		return ProtocolAnyConnect
+	}
+	return protocol
+}
+
 func (c Config) validate(hasAuthProvider bool) error {
 	if strings.TrimSpace(c.Server) == "" {
 		return invalidConfig("server is required")
@@ -83,6 +92,11 @@ func (c Config) validate(hasAuthProvider bool) error {
 	serverURL, err := url.Parse(c.Server)
 	if err != nil || serverURL.Scheme != "https" || serverURL.Hostname() == "" || serverURL.User != nil || serverURL.RawQuery != "" || serverURL.Fragment != "" {
 		return invalidConfig("server must be a valid HTTPS URL")
+	}
+	switch c.Protocol {
+	case "", ProtocolAnyConnect:
+	default:
+		return invalidConfig("protocol must be anyconnect")
 	}
 	if c.Cookie == "" && c.Username == "" && len(c.ClientCertificate) == 0 && !hasAuthProvider {
 		return invalidConfig("cookie, username, client certificate, or authentication provider is required")
