@@ -244,6 +244,9 @@ func TestClientDTLSModesAndFallback(t *testing.T) {
 		if !gateway.ModernDTLSPSKOffered() {
 			t.Fatal("default DTLS key exchange did not advertise PSK negotiation")
 		}
+		if !gateway.LegacyDTLSOffered() {
+			t.Fatal("default DTLS key exchange did not advertise OpenConnect legacy compatibility")
+		}
 		exchangeFacadeICMP(t, ctx, client, "dtls")
 		if gateway.DropDTLSConnections() != 1 {
 			t.Fatal("fake gateway did not have one active DTLS connection")
@@ -359,14 +362,17 @@ func TestClientDTLSInjectedResumption(t *testing.T) {
 	if gateway.ModernDTLSPSKOffered() {
 		t.Fatal("resumption-only mode advertised PSK negotiation")
 	}
+	if gateway.LegacyDTLSOffered() {
+		t.Fatal("resumption-only mode advertised a legacy DTLS cipher")
+	}
 	exchangeFacadeICMP(t, ctx, client, "injected-resumption")
 }
 
-func TestClientLegacyDTLSOptInAndDowngradePolicy(t *testing.T) {
+func TestClientLegacyDTLSCompatibilityAndPolicy(t *testing.T) {
 	scenario := testanyconnect.BasicCSTPScenario()
 	scenario.LegacyDTLS = true
 
-	t.Run("explicit opt in", func(t *testing.T) {
+	t.Run("OpenConnect compatible default", func(t *testing.T) {
 		client, gateway, _, ctx := newDTLSTestClientForScenario(t, scenario, DTLSModeRequire, false, "")
 		defer func() { _ = client.Close() }()
 		defer func() { _ = gateway.Close() }()
@@ -378,23 +384,23 @@ func TestClientLegacyDTLSOptInAndDowngradePolicy(t *testing.T) {
 			t.Fatal("fake gateway did not validate the legacy BAD_VER CCS/Finished flight")
 		}
 		if !gateway.LegacyDTLSOffered() {
-			t.Fatal("explicit legacy opt-in did not advertise the legacy cipher")
+			t.Fatal("default client did not advertise the OpenConnect legacy cipher")
 		}
 		exchangeFacadeICMP(t, ctx, client, "legacy-dtls")
 	})
 
-	t.Run("default rejects downgrade", func(t *testing.T) {
+	t.Run("explicit disable rejects downgrade", func(t *testing.T) {
 		client, gateway, _, ctx := newDTLSTestClientForScenarioWithLegacy(t, scenario, DTLSModeRequire, false, "", false)
 		defer func() { _ = client.Close() }()
 		defer func() { _ = gateway.Close() }()
 		if _, err := client.WaitReady(ctx); !errors.Is(err, openconnect.ErrDeprecatedCryptoDisabled) {
-			t.Fatalf("legacy downgrade returned %v", err)
+			t.Fatalf("disabled legacy DTLS returned %v", err)
 		}
 		if client.ActiveTransport() == "dtls" {
-			t.Fatal("default client accepted a legacy DTLS downgrade")
+			t.Fatal("client accepted legacy DTLS after it was explicitly disabled")
 		}
 		if gateway.LegacyDTLSOffered() {
-			t.Fatal("default client advertised a legacy cipher")
+			t.Fatal("client advertised a legacy cipher after it was explicitly disabled")
 		}
 	})
 }
@@ -482,11 +488,11 @@ func newDTLSTestClientWithLogger(t testing.TB, mode string, failUDP bool, fault 
 	scenario.ModernDTLS = true
 	scenario.DTLSMTU = 1200
 	scenario.DTLSAppID = []byte("mihomo-dtls-app")
-	return newDTLSTestClientForScenarioWithLegacyTimeout(t, scenario, mode, failUDP, fault, scenario.LegacyDTLS, 8*time.Second, clientLogger)
+	return newDTLSTestClientForScenarioWithLegacyTimeout(t, scenario, mode, failUDP, fault, true, 8*time.Second, clientLogger)
 }
 
 func newDTLSTestClientForScenario(t testing.TB, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
-	return newDTLSTestClientForScenarioWithLegacy(t, scenario, mode, failUDP, fault, scenario.LegacyDTLS)
+	return newDTLSTestClientForScenarioWithLegacy(t, scenario, mode, failUDP, fault, true)
 }
 
 func newDTLSTestClientForScenarioWithLegacy(t testing.TB, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string, legacyDTLS bool) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
@@ -525,7 +531,7 @@ func newDTLSTestClientForScenarioWithLegacyTimeout(t testing.TB, scenario testan
 		CertificateAuthority: testanyconnect.RootCAPEM(),
 		DTLSMode:             mode,
 		DTLSKeyExchange:      dtlsKeyExchange,
-		LegacyDTLS:           legacyDTLS,
+		LegacyDTLSDisabled:   !legacyDTLS,
 		Logger:               clientLogger,
 	}, dialer, nil)
 	if err != nil {

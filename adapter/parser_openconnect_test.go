@@ -17,6 +17,7 @@ func TestParseOpenConnect(t *testing.T) {
 		"port":              443,
 		"cookie":            "test-cookie",
 		"dtls-mode":         "off",
+		"legacy-dtls":       false,
 		"handshake-timeout": 10,
 		"ipv6-disabled":     true,
 		"mtu":               1200,
@@ -79,10 +80,6 @@ func TestParseOpenConnectRejectsInvalidOptions(t *testing.T) {
 		{name: "invalid DTLS mode", change: func(mapping map[string]any) { mapping["dtls-mode"] = "invalid" }},
 		{name: "unsupported protocol", change: func(mapping map[string]any) { mapping["protocol"] = "gp" }},
 		{name: "invalid DTLS key exchange", change: func(mapping map[string]any) { mapping["dtls-key-exchange"] = "invalid" }},
-		{name: "legacy DTLS while disabled", change: func(mapping map[string]any) {
-			mapping["dtls-mode"] = "off"
-			mapping["legacy-dtls"] = true
-		}},
 		{name: "negative timeout", change: func(mapping map[string]any) { mapping["handshake-timeout"] = -1 }},
 		{name: "small MTU", change: func(mapping map[string]any) { mapping["mtu"] = 575 }},
 		{name: "small IPv6 MTU", change: func(mapping map[string]any) { mapping["mtu"] = 1279 }},
