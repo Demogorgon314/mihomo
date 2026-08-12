@@ -11,6 +11,7 @@ import (
 
 const (
 	ProtocolAnyConnect = "anyconnect"
+	ProtocolF5         = "f5"
 	TokenModeTOTP      = "totp"
 	TokenModeHOTP      = "hotp"
 	TokenModeRSA       = "rsa"
@@ -125,9 +126,9 @@ func (c Config) validate(hasAuthProvider bool) error {
 		return invalidConfig("server must be a valid HTTPS URL")
 	}
 	switch c.Protocol {
-	case "", ProtocolAnyConnect:
+	case "", ProtocolAnyConnect, ProtocolF5:
 	default:
-		return invalidConfig("protocol must be anyconnect")
+		return invalidConfig("protocol must be anyconnect or f5")
 	}
 	if c.Cookie == "" && c.Username == "" && len(c.ClientCertificate) == 0 && !hasAuthProvider {
 		return invalidConfig("cookie, username, client certificate, or authentication provider is required")
