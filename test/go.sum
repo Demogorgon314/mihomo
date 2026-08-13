@@ -1,7 +1,7 @@
 github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 h1:UQHMgLO+TxOElx5B5HZ4hJQsoJ/PvUvKRhJHDQXO8P8=
 github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
-github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260813013427-59237d891d89 h1:3n9qFASJDCBmkqCkIzDuGCF3YM9xP/E+b+p0kMig0gE=
-github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260813013427-59237d891d89/go.mod h1:gz1K4jg6c+fq86oQMH4pilpCEOEPwmEr2jY+VcF/mkU=
+github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260813024800-71e5e4d15116 h1:uWPWtVJsYAiwhaHMvvhCXiHswuJ7lXgMvfLragk8JVg=
+github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260813024800-71e5e4d15116/go.mod h1:gz1K4jg6c+fq86oQMH4pilpCEOEPwmEr2jY+VcF/mkU=
 github.com/Demogorgon314/gvisor v0.0.0-20260812092912-ac17c043e623 h1:7qy4kC1w+CRMut24JhPnFAh5dk3xRz1YRXNzZaRHZE4=
 github.com/Demogorgon314/gvisor v0.0.0-20260812092912-ac17c043e623/go.mod h1:mBJW3UXUusd8ZYO5M6mig0uScIey9iIubgdIiQAk2ug=
 github.com/Demogorgon314/sing-openconnect v0.0.0-20260813013541-23df882d3b88 h1:lDGv02TNuUNRw3/ydgZ89vddy83kJ90RI+eKbe3KUro=
