@@ -173,7 +173,9 @@ func waitForOCServBenchmarkDTLS(t testing.TB, ctx context.Context, containerID s
 		output, err := dockerOutput(waitContext, "logs", containerID)
 		if err == nil {
 			latest = output
-			if strings.Contains(output, "DTLS ciphersuite: ECDHE-RSA-AES256-GCM-SHA384") &&
+			aes256GCM := strings.Contains(output, "DTLS ciphersuite: OC-DTLS1_2-AES256-GCM") ||
+				strings.Contains(output, "DTLS ciphersuite: ECDHE-RSA-AES256-GCM-SHA384")
+			if aes256GCM &&
 				strings.Contains(output, "Main DTLS session 1 active") {
 				return
 			}
