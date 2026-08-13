@@ -101,7 +101,8 @@ func (d *outboundBatchTestDevice) Close() error {
 }
 
 type outboundBatchTestClient struct {
-	batches chan []byte
+	batches     chan []byte
+	writeErrors chan error
 }
 
 type incomingBatchTestClient struct {
@@ -184,6 +185,13 @@ func (c *outboundBatchTestClient) WritePacketsAtRevision(packets [][]byte, _ uin
 		values[index] = packet[0]
 	}
 	c.batches <- values
+	if c.writeErrors != nil {
+		select {
+		case err := <-c.writeErrors:
+			return err
+		default:
+		}
+	}
 	return nil
 }
 
@@ -233,6 +241,63 @@ func TestAnyConnectStackPacketsUseBoundedBatches(t *testing.T) {
 	}
 	if !slices.Equal(written, []byte{1, 2, 3}) {
 		t.Fatalf("unexpected packet order: %v", written)
+	}
+
+	session.access.Lock()
+	session.generation = nil
+	session.access.Unlock()
+	if err := generation.close(); err != nil {
+		t.Fatal(err)
+	}
+	sessionCancel()
+	session.wait.Wait()
+}
+
+func TestOpenConnectDTLSBatchFailureKeepsSessionForFallback(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	device := &outboundBatchTestDevice{packets: make(chan []byte, 2)}
+	client := &outboundBatchTestClient{
+		batches:     make(chan []byte, 2),
+		writeErrors: make(chan error, 1),
+	}
+	client.writeErrors <- oc.ErrDataPacketDeliveryUnknown
+	generation := &openConnectGeneration{
+		device:          device,
+		revision:        1,
+		outboundPackets: make(chan []byte, openConnectOutboundPacketBatchSize),
+	}
+	generation.packetPool.New = func() any { return make([]byte, 1400) }
+	sessionCtx, sessionCancel := context.WithCancel(ctx)
+	session := &openConnectSession{
+		client:      client,
+		ctx:         sessionCtx,
+		cancel:      sessionCancel,
+		generation:  generation,
+		name:        "batch-fallback-test",
+		initialDone: make(chan struct{}),
+		done:        make(chan struct{}),
+	}
+	session.wait.Add(2)
+	go session.readStackPackets(generation)
+	go session.writeStackPackets(generation)
+
+	device.packets <- []byte{1}
+	select {
+	case <-client.batches:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	device.packets <- []byte{2}
+	select {
+	case values := <-client.batches:
+		if !slices.Equal(values, []byte{2}) {
+			t.Fatalf("unexpected fallback batch: %v", values)
+		}
+	case <-session.done:
+		t.Fatalf("DTLS batch failure stopped the session: %v", session.err())
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
 	}
 
 	session.access.Lock()
