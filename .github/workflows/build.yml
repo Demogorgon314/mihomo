@@ -414,7 +414,7 @@ jobs:
         id: meta_alpha
         uses: docker/metadata-action@v6
         with:
-          images: '${{ env.REGISTRY }}/${{ github.repository }}'
+          images: '${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USER }}/mihomo'
       
       # Extract metadata (tags, labels) for Docker
       # https://github.com/docker/metadata-action
@@ -423,7 +423,7 @@ jobs:
         id: meta_release
         uses: docker/metadata-action@v6
         with:
-          images: '${{ env.REGISTRY }}/${{ github.repository }}'
+          images: '${{ env.REGISTRY }}/${{ secrets.DOCKER_HUB_USER }}/mihomo'
           tags: |
             ${{ github.event.inputs.version }}
           flavor: |
