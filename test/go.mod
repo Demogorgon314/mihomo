@@ -13,7 +13,7 @@ require (
 
 replace github.com/metacubex/mihomo => ../
 
-replace github.com/pion/dtls/v3 => github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260813013427-59237d891d89
+replace github.com/pion/dtls/v3 => github.com/Demogorgon314/dtls/v3 v3.1.6-0.20260813024800-71e5e4d15116
 
 replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-openconnect v0.0.0-20260813013541-23df882d3b88
 
