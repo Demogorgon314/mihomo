@@ -461,6 +461,9 @@ func (o *OpenConnect) run(ctx context.Context) (*openConnectSession, error) {
 				return nil, err
 			default:
 				o.access.Unlock()
+				if _, err := session.client.WaitDataPlaneReady(ctx); err != nil {
+					return nil, err
+				}
 				return session, nil
 			}
 		}

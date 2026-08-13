@@ -211,7 +211,7 @@ func TestAnyConnectOutboundTCPAndUDPEcho(t *testing.T) {
 	if tcpCalls != 1 || udpCalls != 0 {
 		t.Fatalf("unexpected gateway underlay calls: tcp=%d udp=%d", tcpCalls, udpCalls)
 	}
-	if countRecords(recorder.Records(), "cstp-connect") != 1 {
+	if waitAnyConnectRecordCount(t, ctx, recorder, "cstp-connect", 1) != 1 {
 		t.Fatalf("expected one CSTP session, records=%v", recorder.Records())
 	}
 	writeAnyConnectOutboundEvidence(t, scenario.Name)
@@ -289,16 +289,12 @@ func TestAnyConnectModernDTLSOutbound(t *testing.T) {
 		defer packetConn.Close()
 		destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
 		exchangeAnyConnectUDP(t, ctx, packetConn, destination, "modern DTLS UDP echo")
-		if countRecords(recorder.Records(), "dtls-data") == 0 {
-			t.Fatal("outbound traffic did not traverse modern DTLS")
-		}
-		beforeFallback := countRecords(recorder.Records(), "cstp-data")
+		waitAnyConnectRecordCount(t, ctx, recorder, "dtls-data", 1)
+		beforeFallback := recorder.Count("cstp-data")
 		gateway.SetDTLSBlackhole(true)
 		waitAnyConnectTransport(t, ctx, session, "cstp")
 		exchangeAnyConnectUDP(t, ctx, packetConn, destination, "CSTP fallback UDP echo")
-		if countRecords(recorder.Records(), "cstp-data") <= beforeFallback {
-			t.Fatal("auto mode did not carry the existing UDP flow over CSTP fallback")
-		}
+		waitAnyConnectRecordCount(t, ctx, recorder, "cstp-data", beforeFallback+1)
 		writeAnyConnectEvidenceForTransport(t, "modern-dtls", "modern-dtls-auto", []testanyconnect.Capability{testanyconnect.CapabilityModernDTLS}, "dtls")
 		writeAnyConnectEvidenceForTransport(t, "modern-dtls-fallback", "modern-dtls-auto-fallback", []testanyconnect.Capability{testanyconnect.CapabilityFallback}, "cstp")
 	})
@@ -376,16 +372,12 @@ func TestAnyConnectLegacyDTLSOutbound(t *testing.T) {
 	defer packetConn.Close()
 	destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
 	exchangeAnyConnectUDP(t, ctx, packetConn, destination, "legacy DTLS UDP echo")
-	if countRecords(recorder.Records(), "legacy-dtls-data") == 0 {
-		t.Fatal("outbound traffic did not traverse legacy DTLS")
-	}
-	beforeFallback := countRecords(recorder.Records(), "cstp-data")
+	waitAnyConnectRecordCount(t, ctx, recorder, "legacy-dtls-data", 1)
+	beforeFallback := recorder.Count("cstp-data")
 	gateway.SetDTLSBlackhole(true)
 	waitAnyConnectTransport(t, ctx, session, "cstp")
 	exchangeAnyConnectUDP(t, ctx, packetConn, destination, "legacy CSTP fallback UDP echo")
-	if countRecords(recorder.Records(), "cstp-data") <= beforeFallback {
-		t.Fatal("legacy DTLS failure did not preserve the UDP flow over CSTP")
-	}
+	waitAnyConnectRecordCount(t, ctx, recorder, "cstp-data", beforeFallback+1)
 	gateway.SetDTLSBlackhole(false)
 	waitAnyConnectTransport(t, ctx, session, "dtls")
 	exchangeAnyConnectUDP(t, ctx, packetConn, destination, "legacy DTLS restored UDP echo")
@@ -907,7 +899,7 @@ func TestOpenConnectReconnectTimeoutIsBoundedAndOutboundRecovers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("outbound did not recover after reconnect exhaustion: %v", err)
 	}
-	if recovered == nil || countRecords(healthyRecorder.Records(), "cstp-connect") != 1 {
+	if recovered == nil || waitAnyConnectRecordCount(t, ctx, healthyRecorder, "cstp-connect", 1) != 1 {
 		t.Fatalf("outbound recovery did not establish exactly one tunnel: %v", healthyRecorder.Records())
 	}
 }
@@ -1369,7 +1361,7 @@ func TestAnyConnectConcurrentStartupAndCallerCancellation(t *testing.T) {
 	if len(configuration.Routes) == 0 || configuration.Routes[0] != netip.MustParsePrefix("0.0.0.0/0") {
 		t.Fatalf("negotiated routes were not retained: %#v", configuration.Routes)
 	}
-	if countRecords(recorder.Records(), "cstp-connect") != 1 {
+	if waitAnyConnectRecordCount(t, ctx, recorder, "cstp-connect", 1) != 1 {
 		t.Fatalf("expected one shared CSTP session, records=%v", recorder.Records())
 	}
 }
@@ -1625,7 +1617,7 @@ func TestOpenConnectHandshakeTimeoutRetriesAfterBackoff(t *testing.T) {
 	if retryErr != nil {
 		t.Fatalf("startup did not recover after transient timeout: %v", retryErr)
 	}
-	if session == nil || countRecords(healthyRecorder.Records(), "cstp-connect") != 1 {
+	if session == nil || waitAnyConnectRecordCount(t, ctx, healthyRecorder, "cstp-connect", 1) != 1 {
 		t.Fatalf("startup retry did not establish exactly one tunnel: %v", healthyRecorder.Records())
 	}
 	if !retryableOpenConnectError(context.DeadlineExceeded) || !retryableOpenConnectError(oc.ErrReconnectTimeout) {
@@ -1692,6 +1684,27 @@ func countRecords(records []testanyconnect.Record, kind string) int {
 		}
 	}
 	return count
+}
+
+func waitAnyConnectRecordCount(t *testing.T, ctx context.Context, recorder *testanyconnect.Recorder, kind string, minimum uint64) uint64 {
+	t.Helper()
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		count := recorder.Count(kind)
+		if count >= minimum {
+			return count
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("waiting for %q record: %v", kind, ctx.Err())
+		case <-timer.C:
+			t.Fatalf("waiting for %q record: got %d, want at least %d; records=%v", kind, count, minimum, recorder.Records())
+		case <-ticker.C:
+		}
+	}
 }
 
 func writeAnyConnectOutboundEvidence(t *testing.T, scenario string) {

@@ -30,7 +30,10 @@ import (
 
 const echoPeerNIC tcpip.NICID = 1
 
-const echoPeerResponseTimeout = 250 * time.Millisecond
+const (
+	echoPeerResponseTimeout = 2 * time.Second
+	echoPeerQuietTimeout    = 2 * time.Millisecond
+)
 
 // IPv4TCPUDPEchoPeer terminates TCP and UDP flows in an independent gVisor
 // stack and exposes its link as raw packets to the fake gateway.
@@ -272,7 +275,7 @@ func (p *IPv4TCPUDPEchoPeer) handlePackets(packet []byte, collectAdditional bool
 	packetBuffer := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(packet)})
 	p.endpoint.InjectInbound(p.protocol, packetBuffer)
 	packetBuffer.DecRef()
-	readContext, cancel := context.WithTimeout(context.Background(), echoPeerResponseTimeout)
+	readContext, cancel := context.WithTimeout(context.Background(), echoPeerWaitTimeout(packet, p.version))
 	defer cancel()
 	first := p.endpoint.ReadContext(readContext)
 	if first == nil {
@@ -280,25 +283,85 @@ func (p *IPv4TCPUDPEchoPeer) handlePackets(packet []byte, collectAdditional bool
 	}
 	replies := [][]byte{packetBytes(first)}
 	first.DecRef()
-	if !collectAdditional {
+	wantTCPPayload := echoPeerTCPPayloadLength(packet, p.version) > 0
+	if !collectAdditional || !wantTCPPayload || echoPeerTCPPayloadLength(replies[0], p.version) > 0 {
 		return replies, nil
 	}
-	quiet := time.NewTimer(2 * time.Millisecond)
-	defer quiet.Stop()
+	additionalContext, cancelAdditional := context.WithTimeout(context.Background(), echoPeerResponseTimeout)
+	defer cancelAdditional()
 	for {
-		select {
-		case <-quiet.C:
-			return replies, nil
-		default:
-		}
-		next := p.endpoint.Read()
+		next := p.endpoint.ReadContext(additionalContext)
 		if next == nil {
-			time.Sleep(100 * time.Microsecond)
-			continue
+			return nil, errors.New("TCP echo peer did not produce a data response")
 		}
-		replies = append(replies, packetBytes(next))
+		reply := packetBytes(next)
 		next.DecRef()
+		replies = append(replies, reply)
+		if echoPeerTCPPayloadLength(reply, p.version) > 0 {
+			return replies, nil
+		}
 	}
+}
+
+func echoPeerWaitTimeout(packet []byte, version int) time.Duration {
+	payloadLength, tcp := echoPeerTCPPayload(packet, version)
+	if !tcp {
+		return echoPeerResponseTimeout
+	}
+	if payloadLength > 0 {
+		return echoPeerResponseTimeout
+	}
+	transport, _ := echoPeerTransport(packet, version)
+	tcpHeader := header.TCP(transport)
+	if tcpHeader.Flags().Intersects(header.TCPFlagSyn | header.TCPFlagFin) {
+		return echoPeerResponseTimeout
+	}
+	return echoPeerQuietTimeout
+}
+
+func echoPeerTCPPayloadLength(packet []byte, version int) int {
+	payloadLength, _ := echoPeerTCPPayload(packet, version)
+	return payloadLength
+}
+
+func echoPeerTCPPayload(packet []byte, version int) (int, bool) {
+	transport, protocol := echoPeerTransport(packet, version)
+	if protocol != header.TCPProtocolNumber || len(transport) < header.TCPMinimumSize {
+		return 0, false
+	}
+	headerLength := int(header.TCP(transport).DataOffset())
+	if headerLength < header.TCPMinimumSize || headerLength > len(transport) {
+		return 0, false
+	}
+	return len(transport) - headerLength, true
+}
+
+func echoPeerTransport(packet []byte, version int) ([]byte, tcpip.TransportProtocolNumber) {
+	var transport []byte
+	var protocol tcpip.TransportProtocolNumber
+	switch version {
+	case header.IPv4Version:
+		ipv4Header := header.IPv4(packet)
+		if !ipv4Header.IsValid(len(packet)) {
+			return nil, 0
+		}
+		protocol = ipv4Header.TransportProtocol()
+		transport = ipv4Header.Payload()
+	case header.IPv6Version:
+		ipv6Header := header.IPv6(packet)
+		if !ipv6Header.IsValid(len(packet)) {
+			return nil, 0
+		}
+		var parsed bool
+		protocol, parsed = ipv6Header.TryParseTransportProtocol()
+		if !parsed || ipv6Header.NextHeader() != uint8(protocol) {
+			return nil, 0
+		}
+		transport = packet[header.IPv6MinimumSize:]
+	default:
+		return nil, 0
+	}
+	return transport, protocol
 }
 
 func packetBytes(packet *stack.PacketBuffer) []byte {
