@@ -24,6 +24,8 @@ var (
 	ErrDTLSRequired        = errors.New("openconnect DTLS is required but unavailable")
 )
 
+var ErrDataPacketDeliveryUnknown = openconnect.ErrDataPacketDeliveryUnknown
+
 func invalidConfig(message string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidConfig, message)
 }
