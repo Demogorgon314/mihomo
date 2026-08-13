@@ -1488,6 +1488,7 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitAnyConnectRecordCount(t, ctx, recorder, "cstp-connect", 1)
 	if closed := gateway.DropCSTPConnections(); closed != 1 {
 		t.Fatalf("expected one authenticated CSTP connection, closed %d", closed)
 	}
