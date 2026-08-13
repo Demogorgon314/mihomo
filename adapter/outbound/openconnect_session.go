@@ -388,6 +388,12 @@ func (s *openConnectSession) writeStackPackets(generation *openConnectGeneration
 			return
 		}
 		if err != nil {
+			if errors.Is(err, oc.ErrDataPacketDeliveryUnknown) {
+				if s.ctx.Err() == nil {
+					log.Warnln("[OpenConnect](%s) DTLS batch delivery is unknown; continuing with fallback transport", s.name)
+				}
+				continue
+			}
 			if s.ctx.Err() == nil && !errors.Is(err, net.ErrClosed) {
 				log.Warnln("[OpenConnect](%s) tunnel write failed: %v", s.name, err)
 			}
