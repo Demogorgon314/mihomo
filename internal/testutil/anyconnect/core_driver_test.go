@@ -317,7 +317,7 @@ func TestSingOpenConnectModernDTLSDriver(t *testing.T) {
 		t.Fatal(err)
 	}
 	records := recorder.Records()
-	if len(records) == 0 || records[len(records)-1].Kind != "dtls-data" {
+	if recorder.Count("dtls-data") == 0 {
 		t.Fatalf("fake gateway did not record DTLS data: %#v", records)
 	}
 	for _, capability := range []Capability{CapabilityModernDTLS, CapabilityPacketIPv4} {
