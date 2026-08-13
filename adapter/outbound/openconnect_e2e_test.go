@@ -839,7 +839,7 @@ func TestAnyConnectReconnectsAfterUnderlaySwitch(t *testing.T) {
 	})
 }
 
-func TestAnyConnectReconnectTimeoutIsBounded(t *testing.T) {
+func TestOpenConnectReconnectTimeoutIsBoundedAndOutboundRecovers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	scenario := testanyconnect.BasicCSTPScenario()
@@ -875,6 +875,40 @@ func TestAnyConnectReconnectTimeoutIsBounded(t *testing.T) {
 	attempts, _ := dialer.counts()
 	if attempts < 2 || attempts > 3 {
 		t.Fatalf("reconnect attempts were not bounded: %d", attempts)
+	}
+	if _, deadErr := outbound.run(ctx); !errors.Is(deadErr, oc.ErrReconnectTimeout) {
+		t.Fatalf("outbound did not observe the exhausted session: %v", deadErr)
+	}
+	outbound.access.Lock()
+	if outbound.session != nil || outbound.retryDelay != openConnectRetryInitialBackoff || outbound.retryAt.IsZero() {
+		failedSession := outbound.session
+		retryDelay := outbound.retryDelay
+		retryAt := outbound.retryAt
+		outbound.access.Unlock()
+		t.Fatalf("dead session did not arm outbound retry: session=%v delay=%s at=%v", failedSession, retryDelay, retryAt)
+	}
+	outbound.access.Unlock()
+
+	healthyPeer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthyRecorder := testanyconnect.NewRecorder(scenario.Cookie)
+	healthyGateway, err := testanyconnect.StartGateway(ctx, scenario, healthyPeer, healthyRecorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = healthyGateway.Close() }()
+	outbound.access.Lock()
+	outbound.retryAt = time.Now()
+	outbound.config.Server = "https://" + healthyGateway.Address()
+	outbound.access.Unlock()
+	recovered, err := outbound.run(ctx)
+	if err != nil {
+		t.Fatalf("outbound did not recover after reconnect exhaustion: %v", err)
+	}
+	if recovered == nil || countRecords(healthyRecorder.Records(), "cstp-connect") != 1 {
+		t.Fatalf("outbound recovery did not establish exactly one tunnel: %v", healthyRecorder.Records())
 	}
 }
 
@@ -1538,7 +1572,7 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 	})
 }
 
-func TestAnyConnectHandshakeTimeoutIsLatched(t *testing.T) {
+func TestOpenConnectHandshakeTimeoutRetriesAfterBackoff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	scenario := testanyconnect.BasicCSTPScenario()
@@ -1556,20 +1590,46 @@ func TestAnyConnectHandshakeTimeoutIsLatched(t *testing.T) {
 	outbound := newFakeAnyConnectOutbound(t, gateway, scenario, new(openConnectRecordingDialer), 1)
 	defer func() { _ = outbound.Close() }()
 
-	started := time.Now()
 	_, firstErr := outbound.run(ctx)
 	if !errors.Is(firstErr, context.DeadlineExceeded) {
 		t.Fatalf("expected handshake timeout, got %v", firstErr)
 	}
-	if elapsed := time.Since(started); elapsed < 900*time.Millisecond || elapsed > 1500*time.Millisecond {
-		t.Fatalf("handshake timeout took %s", elapsed)
-	}
 	_, secondErr := outbound.run(ctx)
 	if secondErr != firstErr {
-		t.Fatalf("startup failure was not latched: first=%v second=%v", firstErr, secondErr)
+		t.Fatalf("startup retry ignored its backoff: first=%v second=%v", firstErr, secondErr)
 	}
-	if countRecords(recorder.Records(), "cstp-connect") != 0 {
-		t.Fatalf("timed out session unexpectedly became ready: %v", recorder.Records())
+	if err := gateway.Close(); err != nil {
+		t.Fatal(err)
+	}
+	healthyScenario := testanyconnect.BasicCSTPScenario()
+	healthyPeer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthyRecorder := testanyconnect.NewRecorder(healthyScenario.Cookie)
+	healthyGateway, err := testanyconnect.StartGateway(ctx, healthyScenario, healthyPeer, healthyRecorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = healthyGateway.Close() }()
+	outbound.access.Lock()
+	if outbound.retryDelay != openConnectRetryInitialBackoff || outbound.retryAt.IsZero() {
+		outbound.access.Unlock()
+		t.Fatalf("startup timeout did not arm bounded retry: delay=%s at=%v", outbound.retryDelay, outbound.retryAt)
+	}
+	outbound.retryAt = time.Now()
+	outbound.option.HandshakeTimeout = 0
+	outbound.config.Server = "https://" + healthyGateway.Address()
+	outbound.access.Unlock()
+	session, retryErr := outbound.run(ctx)
+	if retryErr != nil {
+		t.Fatalf("startup did not recover after transient timeout: %v", retryErr)
+	}
+	if session == nil || countRecords(healthyRecorder.Records(), "cstp-connect") != 1 {
+		t.Fatalf("startup retry did not establish exactly one tunnel: %v", healthyRecorder.Records())
+	}
+	if !retryableOpenConnectError(context.DeadlineExceeded) || !retryableOpenConnectError(oc.ErrReconnectTimeout) {
+		t.Fatal("timeout and reconnect exhaustion must remain retryable")
 	}
 }
 
