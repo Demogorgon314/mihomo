@@ -912,7 +912,8 @@ func TestAnyConnectCloseStopsActiveReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	recorder := testanyconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -924,6 +925,7 @@ func TestAnyConnectCloseStopsActiveReconnect(t *testing.T) {
 	if _, err := outbound.run(ctx); err != nil {
 		t.Fatal(err)
 	}
+	waitAnyConnectRecordCount(t, ctx, recorder, "cstp-connect", 1)
 	if closed := gateway.DropCSTPConnections(); closed != 1 {
 		t.Fatalf("expected one active CSTP connection, closed %d", closed)
 	}
