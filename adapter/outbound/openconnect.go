@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +23,11 @@ import (
 	M "github.com/metacubex/sing/common/metadata"
 )
 
-const defaultOpenConnectPort = 443
+const (
+	defaultOpenConnectPort         = 443
+	openConnectRetryInitialBackoff = 250 * time.Millisecond
+	openConnectRetryMaximumBackoff = 30 * time.Second
+)
 
 type OpenConnect struct {
 	*Base
@@ -36,6 +42,8 @@ type OpenConnect struct {
 	starting   chan struct{}
 	session    *openConnectSession
 	startupErr error
+	retryAt    time.Time
+	retryDelay time.Duration
 	closed     bool
 	closeOnce  sync.Once
 	closeDone  chan struct{}
@@ -434,16 +442,25 @@ func (o *OpenConnect) run(ctx context.Context) (*openConnectSession, error) {
 		}
 		if o.startupErr != nil {
 			err := o.startupErr
-			o.access.Unlock()
-			return nil, err
+			if retryableOpenConnectError(err) && !time.Now().Before(o.retryAt) {
+				o.startupErr = nil
+				o.retryAt = time.Time{}
+			} else {
+				o.access.Unlock()
+				return nil, err
+			}
 		}
 		if o.session != nil {
 			session := o.session
-			o.access.Unlock()
 			select {
 			case <-session.done:
-				return nil, session.err()
+				err := session.err()
+				o.session = nil
+				o.recordFailureLocked(err)
+				o.access.Unlock()
+				return nil, err
 			default:
+				o.access.Unlock()
 				return session, nil
 			}
 		}
@@ -473,6 +490,9 @@ func (o *OpenConnect) start(starting chan struct{}) {
 	o.access.Lock()
 	if err == nil && !o.closed {
 		o.session = session
+		o.startupErr = nil
+		o.retryAt = time.Time{}
+		o.retryDelay = 0
 	} else {
 		if session != nil {
 			_ = session.close()
@@ -480,11 +500,38 @@ func (o *OpenConnect) start(starting chan struct{}) {
 		if err == nil {
 			err = net.ErrClosed
 		}
-		o.startupErr = err
+		o.recordFailureLocked(err)
 	}
 	o.starting = nil
 	close(starting)
 	o.access.Unlock()
+}
+
+func (o *OpenConnect) recordFailureLocked(err error) {
+	o.startupErr = err
+	if !retryableOpenConnectError(err) {
+		o.retryAt = time.Time{}
+		return
+	}
+	if o.retryDelay == 0 {
+		o.retryDelay = openConnectRetryInitialBackoff
+	} else {
+		o.retryDelay = min(o.retryDelay*2, openConnectRetryMaximumBackoff)
+	}
+	o.retryAt = time.Now().Add(o.retryDelay)
+}
+
+func retryableOpenConnectError(err error) bool {
+	if err == nil || oc.IsTerminal(err) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, oc.ErrReconnectTimeout) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrClosed) {
+		return true
+	}
+	var networkError net.Error
+	return errors.As(err, &networkError)
 }
 
 func openConnectHandshakeContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
