@@ -19,7 +19,7 @@ replace github.com/sagernet/sing-openconnect => github.com/Demogorgon314/sing-op
 
 replace github.com/metacubex/gvisor => github.com/Demogorgon314/gvisor v0.0.0-20260812092912-ac17c043e623
 
-replace github.com/metacubex/sing-wireguard => github.com/Demogorgon314/sing-wireguard v0.0.0-20260812093029-b36422d4aa1c
+replace github.com/metacubex/sing-wireguard => github.com/Demogorgon314/sing-wireguard v0.0.0-20260814050633-d40bc39fc79b
 
 require (
 	github.com/Microsoft/go-winio v0.6.0 // indirect
