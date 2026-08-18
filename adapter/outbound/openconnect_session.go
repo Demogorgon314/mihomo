@@ -97,15 +97,11 @@ type openConnectSession struct {
 type openConnectClient interface {
 	WaitReady(ctx context.Context) (oc.NetworkConfig, error)
 	WaitDataPlaneReady(ctx context.Context) (uint64, error)
-	ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, error)
+	ReadPacketsWithRevision(ctx context.Context) ([][]byte, uint64, func(), error)
 	WritePacket(packet []byte) error
 	WritePacketsAtRevision(packets [][]byte, revision uint64) error
 	ActiveTransport() string
 	Close() error
-}
-
-type openConnectPacketBatchReader interface {
-	ReadPacketsWithRevision(ctx context.Context) ([][]byte, uint64, func(), error)
 }
 
 func newOpenConnectSession(
@@ -431,7 +427,7 @@ func (s *openConnectSession) runTunnelToStack() {
 		}
 	}
 	for s.ctx.Err() == nil {
-		packets, revision, release, err := s.readTunnelPackets()
+		packets, revision, release, err := s.client.ReadPacketsWithRevision(s.ctx)
 		if err != nil {
 			if s.ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
 				log.Warnln("[OpenConnect](%s) tunnel read failed: %v", s.name, err)
@@ -461,7 +457,7 @@ func (s *openConnectSession) runTunnelToStack() {
 				s.stop(errors.New("OpenConnect server sent an invalid network packet"))
 				return
 			}
-			if packetMatchesGeneration(packet, configuration) {
+			if packetVersionMatchesGeneration(packet[0]>>4, configuration) {
 				currentPackets = append(currentPackets, packet)
 			}
 		}
@@ -490,22 +486,7 @@ func (s *openConnectSession) runTunnelToStack() {
 	}
 }
 
-func (s *openConnectSession) readTunnelPackets() ([][]byte, uint64, func(), error) {
-	if batchReader, loaded := s.client.(openConnectPacketBatchReader); loaded {
-		return batchReader.ReadPacketsWithRevision(s.ctx)
-	}
-	packet, revision, err := s.client.ReadPacketWithRevision(s.ctx)
-	if err != nil {
-		return nil, 0, nil, err
-	}
-	return [][]byte{packet}, revision, func() {}, nil
-}
-
-func packetMatchesGeneration(packet []byte, configuration oc.NetworkConfig) bool {
-	if !validOpenConnectPacket(packet, configuration.MTU) {
-		return false
-	}
-	version := packet[0] >> 4
+func packetVersionMatchesGeneration(version byte, configuration oc.NetworkConfig) bool {
 	for _, prefix := range configuration.Addresses {
 		if version == 4 && prefix.Addr().Is4() || version == 6 && prefix.Addr().Is6() {
 			return true

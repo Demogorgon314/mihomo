@@ -80,7 +80,6 @@ type Client struct {
 	networkAccess        sync.Mutex
 	networkConfig        NetworkConfig
 	networkRevision      uint64
-	networkApplied       bool
 	networkHandler       func(NetworkConfigEvent) error
 	networkUpdated       chan struct{}
 	networkError         error
@@ -557,7 +556,6 @@ func (c *Client) applyNetworkConfig(event NetworkConfigEvent) error {
 	}
 	c.networkConfig = cloneNetworkConfig(event.Config)
 	c.networkRevision = event.Revision
-	c.networkApplied = true
 	c.signalNetworkUpdatedLocked()
 	return nil
 }
@@ -570,7 +568,7 @@ func (c *Client) waitNetworkRevision(ctx context.Context, revision uint64) error
 			c.networkAccess.Unlock()
 			return err
 		}
-		if c.networkApplied && c.networkRevision >= revision {
+		if c.networkRevision >= revision {
 			c.networkAccess.Unlock()
 			return nil
 		}
@@ -592,7 +590,7 @@ func (c *Client) waitNetworkConfig(ctx context.Context, configuration NetworkCon
 			c.networkAccess.Unlock()
 			return err
 		}
-		if c.networkApplied && sameNetworkConfig(c.networkConfig, configuration) {
+		if c.networkRevision != 0 && sameNetworkConfig(c.networkConfig, configuration) {
 			c.networkAccess.Unlock()
 			return nil
 		}
