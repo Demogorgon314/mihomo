@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"encoding/json"

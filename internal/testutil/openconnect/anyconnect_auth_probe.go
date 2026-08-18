@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"bytes"
@@ -15,8 +15,8 @@ import (
 	"strings"
 )
 
-// AuthProbeOptions configures the independent AnyConnect XMLPOST probe.
-type AuthProbeOptions struct {
+// AnyConnectAuthProbeOptions configures the independent AnyConnect XMLPOST probe.
+type AnyConnectAuthProbeOptions struct {
 	Address           string
 	ServerName        string
 	RootCAs           *x509.CertPool
@@ -41,9 +41,9 @@ type authProbeDocument struct {
 	} `xml:"auth"`
 }
 
-// RunAuthProbe completes primary credentials and an optional second challenge,
+// RunAnyConnectAuthProbe completes primary credentials and an optional second challenge,
 // returning the issued webvpn cookie without using the production client.
-func RunAuthProbe(ctx context.Context, options AuthProbeOptions) (string, error) {
+func RunAnyConnectAuthProbe(ctx context.Context, options AnyConnectAuthProbeOptions) (string, error) {
 	if ctx == nil {
 		return "", fmt.Errorf("authentication probe context is required")
 	}

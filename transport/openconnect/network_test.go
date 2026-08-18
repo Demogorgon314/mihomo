@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
+	testopenconnect "github.com/metacubex/mihomo/internal/testutil/openconnect"
 	"github.com/pierrec/lz4/v4"
 )
 
 type burstPacketPeer struct {
-	peer  *testanyconnect.IPv4ICMPEchoPeer
+	peer  *testopenconnect.IPv4ICMPEchoPeer
 	count int
 }
 
@@ -33,7 +33,7 @@ func (p *burstPacketPeer) HandlePackets(packet []byte) ([][]byte, error) {
 }
 
 func TestClientPublishesCallerOwnedNetworkConfiguration(t *testing.T) {
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.Configuration.Addresses = append(scenario.Configuration.Addresses, netip.MustParsePrefix("2001:db8::2/64"))
 	scenario.Configuration.Routes = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("2001:db8:1::/64")}
 	scenario.Configuration.ExcludedRoutes = []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}
@@ -117,17 +117,17 @@ func TestClientDefaultStatelessCompressionIgnoresInvalidBoundedFrames(t *testing
 	if err != nil || compressedSize == 0 {
 		t.Fatalf("create oversized compressed fixture: size=%d err=%v", compressedSize, err)
 	}
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.Compression = "oc-lz4"
 	scenario.CSTP.CompressedPackets = [][]byte{{0xff, 0x00}, compressed[:compressedSize]}
 	peerAddress := netip.MustParseAddr("192.0.2.1")
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(peerAddress)
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(peerAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestClientDefaultStatelessCompressionIgnoresInvalidBoundedFrames(t *testing
 		Server:               "https://" + gateway.ServerName() + ":" + port,
 		Cookie:               scenario.Cookie,
 		ServerName:           gateway.ServerName(),
-		CertificateAuthority: testanyconnect.RootCAPEM(),
+		CertificateAuthority: testopenconnect.AnyConnectRootCAPEM(),
 	}, new(recordingDialer), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestClientDefaultStatelessCompressionIgnoresInvalidBoundedFrames(t *testing
 	if _, err := client.WaitReady(ctx); err != nil {
 		t.Fatal(err)
 	}
-	request, err := testanyconnect.BuildIPv4ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), peerAddress, 1, 1, nil)
+	request, err := testopenconnect.BuildIPv4ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), peerAddress, 1, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,17 +169,17 @@ func TestClientDefaultStatelessCompressionIgnoresInvalidBoundedFrames(t *testing
 }
 
 func TestClientIPv6Packet(t *testing.T) {
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.Configuration.Addresses = []netip.Prefix{netip.MustParsePrefix("2001:db8::2/64")}
 	scenario.Configuration.DNS = []netip.Addr{netip.MustParseAddr("2001:db8::53")}
 	peerAddress := netip.MustParseAddr("2001:db8::1")
-	peer, err := testanyconnect.NewIPv6ICMPEchoPeer(peerAddress)
+	peer, err := testopenconnect.NewIPv6ICMPEchoPeer(peerAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestClientIPv6Packet(t *testing.T) {
 		Server:               "https://" + gateway.ServerName() + ":" + port,
 		Cookie:               scenario.Cookie,
 		ServerName:           gateway.ServerName(),
-		CertificateAuthority: testanyconnect.RootCAPEM(),
+		CertificateAuthority: testopenconnect.AnyConnectRootCAPEM(),
 	}, new(recordingDialer), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func TestClientIPv6Packet(t *testing.T) {
 	if _, err := client.WaitReady(ctx); err != nil {
 		t.Fatal(err)
 	}
-	request, err := testanyconnect.BuildIPv6ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), peerAddress, 1, 1, []byte("ipv6"))
+	request, err := testopenconnect.BuildIPv6ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), peerAddress, 1, 1, []byte("ipv6"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,16 +221,16 @@ func TestClientIPv6Packet(t *testing.T) {
 }
 
 func TestClientCloseUnblocksBoundedPacketQueue(t *testing.T) {
-	basePeer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	basePeer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	peer := &burstPacketPeer{peer: basePeer, count: 2048}
-	scenario := testanyconnect.BasicCSTPScenario()
-	recorder := testanyconnect.NewRecorder(scenario.Cookie)
+	scenario := testopenconnect.BasicAnyConnectScenario()
+	recorder := testopenconnect.NewRecorder(scenario.Cookie)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestClientCloseUnblocksBoundedPacketQueue(t *testing.T) {
 		Server:               "https://" + gateway.ServerName() + ":" + port,
 		Cookie:               scenario.Cookie,
 		ServerName:           gateway.ServerName(),
-		CertificateAuthority: testanyconnect.RootCAPEM(),
+		CertificateAuthority: testopenconnect.AnyConnectRootCAPEM(),
 		QueueLength:          1,
 	}, new(recordingDialer), nil)
 	if err != nil {
@@ -255,7 +255,7 @@ func TestClientCloseUnblocksBoundedPacketQueue(t *testing.T) {
 	if _, err := client.WaitReady(ctx); err != nil {
 		t.Fatal(err)
 	}
-	request, err := testanyconnect.BuildIPv4ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), netip.MustParseAddr("192.0.2.1"), 1, 1, make([]byte, 1200))
+	request, err := testopenconnect.BuildIPv4ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), netip.MustParseAddr("192.0.2.1"), 1, 1, make([]byte, 1200))
 	if err != nil {
 		t.Fatal(err)
 	}

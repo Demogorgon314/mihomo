@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"errors"
@@ -8,13 +8,10 @@ import (
 	"time"
 )
 
-const (
-	defaultTunnelMTU = 1400
-	maximumCSTPMTU   = 65535
-)
+const defaultTunnelMTU = 1400
 
-// NetworkConfiguration is the network state advertised by a fake gateway.
-type NetworkConfiguration struct {
+// AnyConnectNetworkConfiguration is the network state advertised by a fake gateway.
+type AnyConnectNetworkConfiguration struct {
 	Addresses      []netip.Prefix
 	Routes         []netip.Prefix
 	ExcludedRoutes []netip.Prefix
@@ -26,23 +23,23 @@ type NetworkConfiguration struct {
 	MTU            uint16
 }
 
-// CSTPFaults controls one deliberate protocol failure in a scenario.
-type CSTPFaults struct {
+// AnyConnectCSTPFaults controls one deliberate protocol failure in a scenario.
+type AnyConnectCSTPFaults struct {
 	RejectStatus           int
 	ResponseChunkSize      int
 	ExpectedRequestHeaders map[string]string
 	MalformedDataHeader    bool
 	BlackholeDPD           bool
 	CompressedPackets      [][]byte
-	ReconnectConfiguration *NetworkConfiguration
+	ReconnectConfiguration *AnyConnectNetworkConfiguration
 	RekeyInterval          time.Duration
 	ResponseDelay          time.Duration
 }
 
-// AuthenticationScenario controls the deterministic XMLPOST authentication
+// AnyConnectAuthenticationScenario controls the deterministic XMLPOST authentication
 // exchange offered by the fake gateway. CookieUses limits successful CSTP
 // CONNECT requests for one issued cookie; zero means unlimited.
-type AuthenticationScenario struct {
+type AnyConnectAuthenticationScenario struct {
 	Enabled                    bool
 	Username                   string
 	Password                   string
@@ -56,12 +53,12 @@ type AuthenticationScenario struct {
 	CookieUses                 int
 }
 
-// Scenario describes one deterministic fake AnyConnect gateway behavior.
-type Scenario struct {
+// AnyConnectScenario describes one deterministic fake AnyConnect gateway behavior.
+type AnyConnectScenario struct {
 	Name            string
 	Cookie          string
-	Configuration   NetworkConfiguration
-	Authentication  AuthenticationScenario
+	Configuration   AnyConnectNetworkConfiguration
+	Authentication  AnyConnectAuthenticationScenario
 	ModernDTLS      bool
 	InjectedDTLS    bool
 	LegacyDTLS      bool
@@ -69,15 +66,15 @@ type Scenario struct {
 	DTLSMTU         uint16
 	DTLSAppID       []byte
 	Compression     string
-	CSTP            CSTPFaults
+	CSTP            AnyConnectCSTPFaults
 }
 
-// BasicCSTPScenario returns the smallest valid IPv4 CSTP scenario.
-func BasicCSTPScenario() Scenario {
-	return Scenario{
+// BasicAnyConnectScenario returns the smallest valid IPv4 CSTP scenario.
+func BasicAnyConnectScenario() AnyConnectScenario {
+	return AnyConnectScenario{
 		Name:   "basic-cstp",
 		Cookie: "phase0-test-cookie",
-		Configuration: NetworkConfiguration{
+		Configuration: AnyConnectNetworkConfiguration{
 			Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.2/24")},
 			DNS:       []netip.Addr{netip.MustParseAddr("192.0.2.53")},
 			MTU:       defaultTunnelMTU,
@@ -86,7 +83,7 @@ func BasicCSTPScenario() Scenario {
 }
 
 // Validate rejects scenarios that cannot produce an unambiguous tunnel.
-func (s Scenario) Validate() error {
+func (s AnyConnectScenario) Validate() error {
 	var validationErrors []error
 	if strings.TrimSpace(s.Name) == "" {
 		validationErrors = append(validationErrors, errors.New("scenario name is required"))
@@ -122,8 +119,8 @@ func (s Scenario) Validate() error {
 	if strings.ContainsAny(s.Configuration.Banner, "\x00\r\n") {
 		validationErrors = append(validationErrors, errors.New("tunnel banner contains an invalid header character"))
 	}
-	if s.Configuration.MTU == 0 || uint32(s.Configuration.MTU) > maximumCSTPMTU {
-		validationErrors = append(validationErrors, fmt.Errorf("tunnel MTU must be between 1 and %d", maximumCSTPMTU))
+	if s.Configuration.MTU == 0 {
+		validationErrors = append(validationErrors, errors.New("tunnel MTU is required"))
 	}
 	if s.CSTP.RejectStatus != 0 && (s.CSTP.RejectStatus < 400 || s.CSTP.RejectStatus > 599) {
 		validationErrors = append(validationErrors, errors.New("CSTP rejection status must be between 400 and 599"))
@@ -181,8 +178,8 @@ func (s Scenario) Validate() error {
 				validationErrors = append(validationErrors, fmt.Errorf("invalid reconnect tunnel address: %s", prefix))
 			}
 		}
-		if configuration.MTU == 0 || uint32(configuration.MTU) > maximumCSTPMTU {
-			validationErrors = append(validationErrors, fmt.Errorf("reconnect tunnel MTU must be between 1 and %d", maximumCSTPMTU))
+		if configuration.MTU == 0 {
+			validationErrors = append(validationErrors, errors.New("reconnect tunnel MTU is required"))
 		}
 	}
 	if s.Authentication.Enabled {
