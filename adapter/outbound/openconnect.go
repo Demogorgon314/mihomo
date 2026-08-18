@@ -31,9 +31,12 @@ const (
 
 type OpenConnect struct {
 	*Base
-	option OpenConnectOption
-	config oc.Config
-	dns    []dns.NameServer
+	config           oc.Config
+	dns              []dns.NameServer
+	remoteDNSResolve bool
+	handshakeTimeout time.Duration
+	authProvider     oc.AuthProvider
+	dialerProxy      string
 
 	runCtx    context.Context
 	runCancel context.CancelFunc
@@ -46,7 +49,6 @@ type OpenConnect struct {
 	retryDelay time.Duration
 	closed     bool
 	closeOnce  sync.Once
-	closeDone  chan struct{}
 	closeErr   error
 }
 
@@ -248,11 +250,13 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 			RoutingMark:  option.RoutingMark,
 			Prefer:       option.IPVersion,
 		}),
-		option:    option,
-		runCtx:    runCtx,
-		runCancel: runCancel,
-		closeDone: make(chan struct{}),
-		config:    config,
+		config:           config,
+		remoteDNSResolve: option.RemoteDnsResolve,
+		handshakeTimeout: time.Duration(option.HandshakeTimeout) * time.Second,
+		authProvider:     option.AuthProvider,
+		dialerProxy:      option.DialerProxy,
+		runCtx:           runCtx,
+		runCancel:        runCancel,
 	}
 	if option.RemoteDnsResolve && len(option.Dns) > 0 {
 		parsedDNS, err := parseOpenConnectNameServers(option.Dns)
@@ -373,7 +377,7 @@ func (o *OpenConnect) resolveUDP(ctx context.Context, metadata *C.Metadata, remo
 }
 
 func (o *OpenConnect) resolverForConfig(configuration oc.NetworkConfig) (resolver.Resolver, error) {
-	if !o.option.RemoteDnsResolve {
+	if !o.remoteDNSResolve {
 		return nil, nil
 	}
 	nameservers := append([]dns.NameServer(nil), o.dns...)
@@ -402,7 +406,7 @@ func networkConfigHasIPv6(configuration oc.NetworkConfig) bool {
 
 func (o *OpenConnect) ProxyInfo() C.ProxyInfo {
 	info := o.Base.ProxyInfo()
-	info.DialerProxy = o.option.DialerProxy
+	info.DialerProxy = o.dialerProxy
 	return info
 }
 
@@ -427,9 +431,7 @@ func (o *OpenConnect) Close() error {
 		if session != nil {
 			o.closeErr = session.close()
 		}
-		close(o.closeDone)
 	})
-	<-o.closeDone
 	return o.closeErr
 }
 
@@ -483,13 +485,9 @@ func (o *OpenConnect) run(ctx context.Context) (*openConnectSession, error) {
 }
 
 func (o *OpenConnect) start(starting chan struct{}) {
-	var timeout time.Duration
-	if o.option.HandshakeTimeout > 0 {
-		timeout = time.Duration(o.option.HandshakeTimeout) * time.Second
-	}
-	handshakeCtx, cancel := openConnectHandshakeContext(o.runCtx, timeout)
+	handshakeCtx, cancel := openConnectHandshakeContext(o.runCtx, o.handshakeTimeout)
 	defer cancel()
-	session, err := newAnyConnectSession(o.runCtx, handshakeCtx, o.config, o.dialer, o.option.AuthProvider, o.resolverForConfig, o.name)
+	session, err := newOpenConnectSession(o.runCtx, handshakeCtx, o.config, o.dialer, o.authProvider, o.resolverForConfig, o.name)
 	o.access.Lock()
 	if err == nil && !o.closed {
 		o.session = session
