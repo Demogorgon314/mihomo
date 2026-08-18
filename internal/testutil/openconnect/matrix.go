@@ -83,8 +83,7 @@ func (m *CapabilityMatrix) Record(evidence Evidence) error {
 	return nil
 }
 
-// Snapshot returns evidence sorted by capability, driver, then environment.
-func (m *CapabilityMatrix) Snapshot() []Evidence {
+func (m *CapabilityMatrix) snapshot() []Evidence {
 	if m == nil {
 		return nil
 	}
@@ -105,7 +104,7 @@ func (m *CapabilityMatrix) WriteJSON(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("capability matrix output path is required")
 	}
-	content, err := json.MarshalIndent(m.Snapshot(), "", "  ")
+	content, err := json.MarshalIndent(m.snapshot(), "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal capability matrix: %w", err)
 	}
