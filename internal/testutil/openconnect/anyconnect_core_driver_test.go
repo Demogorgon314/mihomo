@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"bytes"
@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	openconnect "github.com/sagernet/sing-openconnect"
+	singopenconnect "github.com/sagernet/sing-openconnect"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
 
 func TestSingOpenConnectCSTPDriver(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	scenario.CSTP.ResponseChunkSize = 1
 	serverAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := NewIPv4ICMPEchoPeer(serverAddress)
@@ -28,11 +28,11 @@ func TestSingOpenConnectCSTPDriver(t *testing.T) {
 	recorder := NewRecorder(scenario.Cookie)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	gateway, err := StartGateway(ctx, scenario, peer, recorder)
+	gateway, err := StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
-	configurationEvents := make(chan openconnect.TunnelConfigurationEvent, 1)
+	configurationEvents := make(chan singopenconnect.TunnelConfigurationEvent, 1)
 	client, err := newCoreTestClient(ctx, gateway, scenario.Cookie, configurationEvents, gateway.RootCAs(), true, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestSingOpenConnectCSTPDriver(t *testing.T) {
 	if configuration.MTU != uint32(scenario.Configuration.MTU) || len(configuration.Addresses) != 1 || configuration.Addresses[0] != scenario.Configuration.Addresses[0] {
 		t.Fatalf("unexpected core configuration: %#v", configuration)
 	}
-	if !client.Ready() || client.ActiveTransport() != openconnect.TransportCSTP {
+	if !client.Ready() || client.ActiveTransport() != singopenconnect.TransportCSTP {
 		t.Fatalf("core is not ready on CSTP: ready=%v transport=%q", client.Ready(), client.ActiveTransport())
 	}
 	request, err := BuildIPv4ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), serverAddress, 13, 21, []byte("sing-openconnect-core"))
@@ -79,7 +79,7 @@ func TestSingOpenConnectCSTPDriver(t *testing.T) {
 			Scenario:   scenario.Name,
 			Driver:     DriverCore,
 			Gateway:    "fake",
-			Transport:  openconnect.TransportCSTP,
+			Transport:  singopenconnect.TransportCSTP,
 			Address:    "ipv4",
 			Passed:     true,
 		}); err != nil {
@@ -89,8 +89,8 @@ func TestSingOpenConnectCSTPDriver(t *testing.T) {
 }
 
 func TestSingOpenConnectAuthenticationDriver(t *testing.T) {
-	scenario := BasicCSTPScenario()
-	scenario.Authentication = AuthenticationScenario{
+	scenario := BasicAnyConnectScenario()
+	scenario.Authentication = AnyConnectAuthenticationScenario{
 		Enabled:           true,
 		Username:          "core-user",
 		Password:          "core-password",
@@ -104,7 +104,7 @@ func TestSingOpenConnectAuthenticationDriver(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	gateway, err := StartGateway(ctx, scenario, peer, NewRecorder(scenario.Cookie, scenario.Authentication.Password, scenario.Authentication.ChallengeResponse))
+	gateway, err := StartAnyConnectGateway(ctx, scenario, peer, NewRecorder(scenario.Cookie, scenario.Authentication.Password, scenario.Authentication.ChallengeResponse))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,19 +113,19 @@ func TestSingOpenConnectAuthenticationDriver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := openconnect.NewClient(openconnect.ClientOptions{
+	client, err := singopenconnect.NewClient(singopenconnect.ClientOptions{
 		Context:      ctx,
 		Server:       "https://" + gateway.ServerName() + ":" + port,
 		Username:     scenario.Authentication.Username,
 		Password:     scenario.Authentication.Password,
 		NoUDP:        true,
 		IPv6Disabled: true,
-		FormEntries: []openconnect.FormEntry{{
+		FormEntries: []singopenconnect.FormEntry{{
 			FormID: "challenge",
 			Name:   "answer",
 			Value:  scenario.Authentication.ChallengeResponse,
 		}},
-		TLSConfig: openconnect.ClientTLSOptions{Config: &tls.Config{
+		TLSConfig: singopenconnect.ClientTLSOptions{Config: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			ServerName: gateway.ServerName(),
 			RootCAs:    gateway.RootCAs(),
@@ -162,7 +162,7 @@ func TestSingOpenConnectAuthenticationDriver(t *testing.T) {
 		Scenario:   "username-password-challenge",
 		Driver:     DriverCore,
 		Gateway:    "fake",
-		Transport:  openconnect.TransportCSTP,
+		Transport:  singopenconnect.TransportCSTP,
 		Address:    "ipv4",
 		Passed:     true,
 	}); err != nil {
@@ -171,9 +171,9 @@ func TestSingOpenConnectAuthenticationDriver(t *testing.T) {
 }
 
 func TestSingOpenConnectTerminalTLSError(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	gateway, _, ctx := startProbeTestGateway(t, scenario)
-	client, err := newCoreTestClient(ctx, gateway, scenario.Cookie, make(chan openconnect.TunnelConfigurationEvent, 1), x509.NewCertPool(), true, nil)
+	client, err := newCoreTestClient(ctx, gateway, scenario.Cookie, make(chan singopenconnect.TunnelConfigurationEvent, 1), x509.NewCertPool(), true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,10 +209,10 @@ func (d *failingCoreUDPDialer) ListenPacket(ctx context.Context, destination M.S
 }
 
 func TestSingOpenConnectDTLSFailureFallsBackToCSTP(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	scenario.ModernDTLS = true
 	gateway, _, ctx := startProbeTestGateway(t, scenario)
-	events := make(chan openconnect.TunnelConfigurationEvent, 1)
+	events := make(chan singopenconnect.TunnelConfigurationEvent, 1)
 	dialer := new(failingCoreUDPDialer)
 	client, err := newCoreTestClient(ctx, gateway, scenario.Cookie, events, gateway.RootCAs(), false, dialer)
 	if err != nil {
@@ -230,7 +230,7 @@ func TestSingOpenConnectDTLSFailureFallsBackToCSTP(t *testing.T) {
 	if dialer.attempts.Load() == 0 {
 		t.Fatal("core did not attempt the advertised DTLS transport")
 	}
-	if !client.Ready() || client.ActiveTransport() != openconnect.TransportCSTP {
+	if !client.Ready() || client.ActiveTransport() != singopenconnect.TransportCSTP {
 		t.Fatalf("core did not fall back to CSTP: ready=%v transport=%q", client.Ready(), client.ActiveTransport())
 	}
 	serverAddress := netip.MustParseAddr("192.0.2.1")
@@ -256,7 +256,7 @@ func TestSingOpenConnectDTLSFailureFallsBackToCSTP(t *testing.T) {
 		Scenario:   "dtls-dial-failure",
 		Driver:     DriverCore,
 		Gateway:    "fake",
-		Transport:  openconnect.TransportCSTP,
+		Transport:  singopenconnect.TransportCSTP,
 		Address:    "ipv4",
 		Passed:     true,
 	}); err != nil {
@@ -265,7 +265,7 @@ func TestSingOpenConnectDTLSFailureFallsBackToCSTP(t *testing.T) {
 }
 
 func TestSingOpenConnectModernDTLSDriver(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	scenario.ModernDTLS = true
 	serverAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := NewIPv4ICMPEchoPeer(serverAddress)
@@ -275,11 +275,11 @@ func TestSingOpenConnectModernDTLSDriver(t *testing.T) {
 	recorder := NewRecorder(scenario.Cookie)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	gateway, err := StartGateway(ctx, scenario, peer, recorder)
+	gateway, err := StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
-	events := make(chan openconnect.TunnelConfigurationEvent, 1)
+	events := make(chan singopenconnect.TunnelConfigurationEvent, 1)
 	client, err := newCoreTestClient(ctx, gateway, scenario.Cookie, events, gateway.RootCAs(), false, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -290,10 +290,10 @@ func TestSingOpenConnectModernDTLSDriver(t *testing.T) {
 	if _, err := client.WaitReady(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for client.ActiveTransport() != openconnect.TransportDTLS && ctx.Err() == nil {
+	for client.ActiveTransport() != singopenconnect.TransportDTLS && ctx.Err() == nil {
 		time.Sleep(time.Millisecond)
 	}
-	if !client.Ready() || client.ActiveTransport() != openconnect.TransportDTLS {
+	if !client.Ready() || client.ActiveTransport() != singopenconnect.TransportDTLS {
 		t.Fatalf("core is not ready on modern DTLS: ready=%v transport=%q", client.Ready(), client.ActiveTransport())
 	}
 	request, err := BuildIPv4ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), serverAddress, 41, 43, []byte("modern-dtls"))
@@ -326,7 +326,7 @@ func TestSingOpenConnectModernDTLSDriver(t *testing.T) {
 			Scenario:   "modern-dtls",
 			Driver:     DriverCore,
 			Gateway:    "fake",
-			Transport:  openconnect.TransportDTLS,
+			Transport:  singopenconnect.TransportDTLS,
 			Address:    "ipv4",
 			Passed:     true,
 		}); err != nil {
@@ -338,7 +338,7 @@ func TestSingOpenConnectModernDTLSDriver(t *testing.T) {
 func TestSingOpenConnectStatelessCompressionDriver(t *testing.T) {
 	for _, algorithm := range []string{"lzs", "oc-lz4"} {
 		t.Run(algorithm, func(t *testing.T) {
-			scenario := BasicCSTPScenario()
+			scenario := BasicAnyConnectScenario()
 			scenario.Compression = algorithm
 			peerAddress := netip.MustParseAddr("192.0.2.1")
 			peer, err := NewIPv4ICMPEchoPeer(peerAddress)
@@ -348,7 +348,7 @@ func TestSingOpenConnectStatelessCompressionDriver(t *testing.T) {
 			recorder := NewRecorder(scenario.Cookie)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			gateway, err := StartGateway(ctx, scenario, peer, recorder)
+			gateway, err := StartAnyConnectGateway(ctx, scenario, peer, recorder)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -357,15 +357,15 @@ func TestSingOpenConnectStatelessCompressionDriver(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			client, err := openconnect.NewClient(openconnect.ClientOptions{
+			client, err := singopenconnect.NewClient(singopenconnect.ClientOptions{
 				Context:             ctx,
 				Server:              "https://" + gateway.ServerName() + ":" + port,
 				Cookie:              scenario.Cookie,
 				NoUDP:               true,
 				IPv6Disabled:        true,
-				CompressionMode:     openconnect.CompressionModeStateless,
+				CompressionMode:     singopenconnect.CompressionModeStateless,
 				CompressionDisabled: false,
-				TLSConfig: openconnect.ClientTLSOptions{Config: &tls.Config{
+				TLSConfig: singopenconnect.ClientTLSOptions{Config: &tls.Config{
 					MinVersion: tls.VersionTLS12,
 					ServerName: gateway.ServerName(),
 					RootCAs:    gateway.RootCAs(),
@@ -410,7 +410,7 @@ func TestSingOpenConnectStatelessCompressionDriver(t *testing.T) {
 				Scenario:   scenario.Name + "-" + algorithm,
 				Driver:     DriverCore,
 				Gateway:    "fake",
-				Transport:  openconnect.TransportCSTP,
+				Transport:  singopenconnect.TransportCSTP,
 				Address:    "ipv4",
 				Passed:     true,
 			}); err != nil {
@@ -422,30 +422,30 @@ func TestSingOpenConnectStatelessCompressionDriver(t *testing.T) {
 
 func newCoreTestClient(
 	ctx context.Context,
-	gateway *Gateway,
+	gateway *AnyConnectGateway,
 	cookie string,
-	configurationEvents chan<- openconnect.TunnelConfigurationEvent,
+	configurationEvents chan<- singopenconnect.TunnelConfigurationEvent,
 	roots *x509.CertPool,
 	noUDP bool,
 	dialer N.Dialer,
-) (*openconnect.Client, error) {
+) (*singopenconnect.Client, error) {
 	_, port, err := net.SplitHostPort(gateway.Address())
 	if err != nil {
 		return nil, err
 	}
-	return openconnect.NewClient(openconnect.ClientOptions{
+	return singopenconnect.NewClient(singopenconnect.ClientOptions{
 		Context:      ctx,
 		Server:       "https://" + gateway.ServerName() + ":" + port,
 		Cookie:       cookie,
 		NoUDP:        noUDP,
 		IPv6Disabled: true,
 		Dialer:       dialer,
-		TLSConfig: openconnect.ClientTLSOptions{Config: &tls.Config{
+		TLSConfig: singopenconnect.ClientTLSOptions{Config: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			ServerName: gateway.ServerName(),
 			RootCAs:    roots,
 		}},
-		OnTunnelConfiguration: func(event openconnect.TunnelConfigurationEvent) error {
+		OnTunnelConfiguration: func(event singopenconnect.TunnelConfigurationEvent) error {
 			select {
 			case configurationEvents <- event:
 			default:

@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"encoding/xml"
@@ -22,7 +22,7 @@ type fakeAuthRequest struct {
 	} `xml:"auth"`
 }
 
-func (g *Gateway) handleAuthRequest(connection net.Conn, request *http.Request) error {
+func (g *AnyConnectGateway) handleAuthRequest(connection net.Conn, request *http.Request) error {
 	if !g.scenario.Authentication.Enabled {
 		return writeHTTPRejection(connection, http.StatusNotFound)
 	}
@@ -64,7 +64,7 @@ func (g *Gateway) handleAuthRequest(connection net.Conn, request *http.Request) 
 	}
 }
 
-func (g *Gateway) handleAuthReply(connection net.Conn, document fakeAuthRequest) error {
+func (g *AnyConnectGateway) handleAuthReply(connection net.Conn, document fakeAuthRequest) error {
 	authentication := g.scenario.Authentication
 	g.authLock.Lock()
 	defer g.authLock.Unlock()
@@ -90,7 +90,7 @@ func (g *Gateway) handleAuthReply(connection net.Conn, document fakeAuthRequest)
 	return g.completeAuthentication(connection)
 }
 
-func (a AuthenticationScenario) acceptsChallengeResponse(value string) bool {
+func (a AnyConnectAuthenticationScenario) acceptsChallengeResponse(value string) bool {
 	if value == a.ChallengeResponse && value != "" {
 		return true
 	}
@@ -102,7 +102,7 @@ func (a AuthenticationScenario) acceptsChallengeResponse(value string) bool {
 	return false
 }
 
-func (g *Gateway) completeAuthentication(connection net.Conn) error {
+func (g *AnyConnectGateway) completeAuthentication(connection net.Conn) error {
 	g.authGeneration++
 	g.activeCookie = g.scenario.Cookie + "-" + strconv.FormatUint(g.authGeneration, 10)
 	g.activeCookieUses = 0
@@ -111,7 +111,7 @@ func (g *Gateway) completeAuthentication(connection net.Conn) error {
 	return writeFakeAuthXML(connection, http.StatusOK, response, g.activeCookie)
 }
 
-func (g *Gateway) consumeTunnelCookie(value string) bool {
+func (g *AnyConnectGateway) consumeTunnelCookie(value string) bool {
 	if !g.scenario.Authentication.Enabled {
 		return value == g.scenario.Cookie
 	}

@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"bytes"
@@ -109,7 +109,7 @@ func (s *fakeLegacyDTLSSession) destroy() {
 	*s = fakeLegacyDTLSSession{}
 }
 
-func (g *Gateway) runLegacyDTLS() {
+func (g *AnyConnectGateway) runLegacyDTLS() {
 	defer g.waitGroup.Done()
 	buffer := make([]byte, maximumDTLSPacketSize+512)
 	for {
@@ -130,7 +130,7 @@ func (g *Gateway) runLegacyDTLS() {
 	}
 }
 
-func (g *Gateway) handleLegacyDTLSDatagram(remote *net.UDPAddr, datagram []byte) error {
+func (g *AnyConnectGateway) handleLegacyDTLSDatagram(remote *net.UDPAddr, datagram []byte) error {
 	records, err := parseFakeLegacyRecords(datagram)
 	if err != nil {
 		return err
@@ -187,7 +187,7 @@ func (g *Gateway) handleLegacyDTLSDatagram(remote *net.UDPAddr, datagram []byte)
 	return nil
 }
 
-func (g *Gateway) sendLegacyHelloVerify(remote *net.UDPAddr) error {
+func (g *AnyConnectGateway) sendLegacyHelloVerify(remote *net.UDPAddr) error {
 	body := append([]byte{1, 0, byte(len("mihomo-legacy"))}, []byte("mihomo-legacy")...)
 	record, err := marshalFakeLegacyRecord(fakeLegacyDTLSRecord{
 		contentType: fakeLegacyContentHandshake,
@@ -200,7 +200,7 @@ func (g *Gateway) sendLegacyHelloVerify(remote *net.UDPAddr) error {
 	return g.writeLegacyDatagram(remote, record)
 }
 
-func (g *Gateway) sendLegacyServerFlight(remote *net.UDPAddr, clientHelloBody []byte, clientRandom []byte) error {
+func (g *AnyConnectGateway) sendLegacyServerFlight(remote *net.UDPAddr, clientHelloBody []byte, clientRandom []byte) error {
 	g.pskLock.RLock()
 	masterSecret := append([]byte(nil), g.dtlsMasterSecret...)
 	g.pskLock.RUnlock()
@@ -273,7 +273,7 @@ func (g *Gateway) sendLegacyServerFlight(remote *net.UDPAddr, clientHelloBody []
 	return g.writeLegacyDatagram(remote, flight)
 }
 
-func (g *Gateway) acceptLegacyClientFinished(record fakeLegacyDTLSRecord) error {
+func (g *AnyConnectGateway) acceptLegacyClientFinished(record fakeLegacyDTLSRecord) error {
 	session := g.legacySession
 	if record.contentType == fakeLegacyContentCCS {
 		if record.epoch != 0 || !bytes.Equal(record.payload, []byte{1, 0, 2}) {
@@ -306,15 +306,15 @@ func (g *Gateway) acceptLegacyClientFinished(record fakeLegacyDTLSRecord) error 
 	return nil
 }
 
-func (g *Gateway) LegacyDTLSHandshakeObserved() bool {
+func (g *AnyConnectGateway) LegacyDTLSHandshakeObserved() bool {
 	return g != nil && g.legacyHandshakeObserved.Load()
 }
 
-func (g *Gateway) LegacyDTLSOffered() bool {
+func (g *AnyConnectGateway) LegacyDTLSOffered() bool {
 	return g != nil && g.legacyDTLSOffered.Load()
 }
 
-func (g *Gateway) handleLegacyApplicationPacket(packet []byte) error {
+func (g *AnyConnectGateway) handleLegacyApplicationPacket(packet []byte) error {
 	if len(packet) == 0 {
 		return errors.New("empty fake legacy DTLS application packet")
 	}
@@ -343,7 +343,7 @@ func (g *Gateway) handleLegacyApplicationPacket(packet []byte) error {
 	}
 }
 
-func (g *Gateway) sendLegacyApplication(payload []byte) error {
+func (g *AnyConnectGateway) sendLegacyApplication(payload []byte) error {
 	session := g.legacySession
 	record := fakeLegacyDTLSRecord{contentType: fakeLegacyContentData, epoch: 1, sequence: session.serverSequence, payload: payload}
 	macKey := session.keys.serverMAC
@@ -383,7 +383,7 @@ func (g *Gateway) sendLegacyApplication(payload []byte) error {
 	return g.writeLegacyDatagram(session.remote, encoded)
 }
 
-func (g *Gateway) writeLegacyDatagram(remote *net.UDPAddr, payload []byte) error {
+func (g *AnyConnectGateway) writeLegacyDatagram(remote *net.UDPAddr, payload []byte) error {
 	count, err := g.legacyDTLSConn.WriteToUDP(payload, remote)
 	if err != nil {
 		return fmt.Errorf("write fake legacy DTLS datagram: %w", err)

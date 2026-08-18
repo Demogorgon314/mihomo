@@ -21,7 +21,7 @@ import (
 	"time"
 
 	C "github.com/metacubex/mihomo/constant"
-	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
+	testopenconnect "github.com/metacubex/mihomo/internal/testutil/openconnect"
 	oc "github.com/metacubex/mihomo/transport/openconnect"
 )
 
@@ -130,9 +130,9 @@ func (d *openConnectRecordingDialer) counts() (int, int) {
 func TestAnyConnectOutboundTCPAndUDPEcho(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	peerAddress := netip.MustParseAddr("192.0.2.1")
-	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,8 +141,8 @@ func TestAnyConnectOutboundTCPAndUDPEcho(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	recorder := testanyconnect.NewRecorder(scenario.Cookie)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,16 +220,16 @@ func TestAnyConnectOutboundTCPAndUDPEcho(t *testing.T) {
 func TestAnyConnectOutboundIPv6TCPAndUDPEcho(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.Configuration.Addresses = []netip.Prefix{netip.MustParsePrefix("2001:db8::2/64")}
 	scenario.Configuration.DNS = []netip.Addr{netip.MustParseAddr("2001:db8::53")}
 	peerAddress := netip.MustParseAddr("2001:db8::1")
-	peer, err := testanyconnect.NewIPv6TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv6TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = peer.Close() }()
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestAnyConnectOutboundIPv6TCPAndUDPEcho(t *testing.T) {
 	}
 	_ = packetConn.Close()
 	_ = connection.Close()
-	writeAnyConnectEvidenceForAddress(t, "ipv6", scenario.Name+"-tcp-udp-echo", []testanyconnect.Capability{testanyconnect.CapabilityPacketIPv6}, "ipv6")
+	writeAnyConnectEvidenceForAddress(t, "ipv6", scenario.Name+"-tcp-udp-echo", []testopenconnect.Capability{testopenconnect.CapabilityPacketIPv6}, "ipv6")
 }
 
 func TestAnyConnectModernDTLSOutbound(t *testing.T) {
@@ -295,8 +295,8 @@ func TestAnyConnectModernDTLSOutbound(t *testing.T) {
 		waitAnyConnectTransport(t, ctx, session, "cstp")
 		exchangeAnyConnectUDP(t, ctx, packetConn, destination, "CSTP fallback UDP echo")
 		waitAnyConnectRecordCount(t, ctx, recorder, "cstp-data", beforeFallback+1)
-		writeAnyConnectEvidenceForTransport(t, "modern-dtls", "modern-dtls-auto", []testanyconnect.Capability{testanyconnect.CapabilityModernDTLS}, "dtls")
-		writeAnyConnectEvidenceForTransport(t, "modern-dtls-fallback", "modern-dtls-auto-fallback", []testanyconnect.Capability{testanyconnect.CapabilityFallback}, "cstp")
+		writeAnyConnectEvidenceForTransport(t, "modern-dtls", "modern-dtls-auto", []testopenconnect.Capability{testopenconnect.CapabilityModernDTLS}, "dtls")
+		writeAnyConnectEvidenceForTransport(t, "modern-dtls-fallback", "modern-dtls-auto-fallback", []testopenconnect.Capability{testopenconnect.CapabilityFallback}, "cstp")
 	})
 
 	t.Run("require fail closed", func(t *testing.T) {
@@ -309,7 +309,7 @@ func TestAnyConnectModernDTLSOutbound(t *testing.T) {
 		defer packetConn.Close()
 		destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
 		exchangeAnyConnectUDP(t, ctx, packetConn, destination, "required DTLS UDP echo")
-		request, err := testanyconnect.BuildIPv4ICMPEchoRequest(netip.MustParseAddr("192.0.2.2"), peerAddress, 62, 1, []byte("require-fail-closed"))
+		request, err := testopenconnect.BuildIPv4ICMPEchoRequest(netip.MustParseAddr("192.0.2.2"), peerAddress, 62, 1, []byte("require-fail-closed"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -381,8 +381,8 @@ func TestAnyConnectLegacyDTLSOutbound(t *testing.T) {
 	gateway.SetDTLSBlackhole(false)
 	waitAnyConnectTransport(t, ctx, session, "dtls")
 	exchangeAnyConnectUDP(t, ctx, packetConn, destination, "legacy DTLS restored UDP echo")
-	writeAnyConnectEvidenceForTransport(t, "legacy-dtls", "legacy-dtls-default", []testanyconnect.Capability{testanyconnect.CapabilityLegacyDTLS}, "dtls")
-	writeAnyConnectEvidenceForTransport(t, "legacy-dtls-fallback", "legacy-dtls-auto-fallback", []testanyconnect.Capability{testanyconnect.CapabilityFallback}, "cstp")
+	writeAnyConnectEvidenceForTransport(t, "legacy-dtls", "legacy-dtls-default", []testopenconnect.Capability{testopenconnect.CapabilityLegacyDTLS}, "dtls")
+	writeAnyConnectEvidenceForTransport(t, "legacy-dtls-fallback", "legacy-dtls-auto-fallback", []testopenconnect.Capability{testopenconnect.CapabilityFallback}, "cstp")
 }
 
 func TestAnyConnectLegacyDTLSRekey(t *testing.T) {
@@ -405,22 +405,22 @@ func TestAnyConnectLegacyDTLSRekey(t *testing.T) {
 	}
 	waitAnyConnectTransport(t, ctx, session, "dtls")
 	exchangeAnyConnectUDP(t, ctx, packetConn, destination, "legacy DTLS rekey UDP echo")
-	writeAnyConnectEvidenceForTransport(t, "legacy-dtls-rekey", "legacy-dtls-rekey", []testanyconnect.Capability{testanyconnect.CapabilityRekey}, "dtls")
+	writeAnyConnectEvidenceForTransport(t, "legacy-dtls-rekey", "legacy-dtls-rekey", []testopenconnect.Capability{testopenconnect.CapabilityRekey}, "dtls")
 }
 
-func startModernDTLSOutbound(t testing.TB, mode string) (context.Context, *OpenConnect, *openConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+func startModernDTLSOutbound(t testing.TB, mode string) (context.Context, *OpenConnect, *openConnectSession, *testopenconnect.AnyConnectGateway, *testopenconnect.Recorder, netip.Addr) {
 	return startDTLSOutbound(t, mode, false, 0)
 }
 
-func startLegacyDTLSOutbound(t testing.TB, mode string) (context.Context, *OpenConnect, *openConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+func startLegacyDTLSOutbound(t testing.TB, mode string) (context.Context, *OpenConnect, *openConnectSession, *testopenconnect.AnyConnectGateway, *testopenconnect.Recorder, netip.Addr) {
 	return startDTLSOutbound(t, mode, true, 0)
 }
 
-func startLegacyDTLSRekeyOutbound(t testing.TB, mode string) (context.Context, *OpenConnect, *openConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+func startLegacyDTLSRekeyOutbound(t testing.TB, mode string) (context.Context, *OpenConnect, *openConnectSession, *testopenconnect.AnyConnectGateway, *testopenconnect.Recorder, netip.Addr) {
 	return startDTLSOutbound(t, mode, true, 5*time.Second)
 }
 
-func startDTLSOutbound(t testing.TB, mode string, legacy bool, rekeyInterval time.Duration) (context.Context, *OpenConnect, *openConnectSession, *testanyconnect.Gateway, *testanyconnect.Recorder, netip.Addr) {
+func startDTLSOutbound(t testing.TB, mode string, legacy bool, rekeyInterval time.Duration) (context.Context, *OpenConnect, *openConnectSession, *testopenconnect.AnyConnectGateway, *testopenconnect.Recorder, netip.Addr) {
 	t.Helper()
 	timeout := 30 * time.Second
 	if legacy {
@@ -428,7 +428,7 @@ func startDTLSOutbound(t testing.TB, mode string, legacy bool, rekeyInterval tim
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	t.Cleanup(cancel)
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	if legacy {
 		scenario.LegacyDTLS = true
 	} else {
@@ -436,13 +436,13 @@ func startDTLSOutbound(t testing.TB, mode string, legacy bool, rekeyInterval tim
 	}
 	scenario.CSTP.RekeyInterval = rekeyInterval
 	peerAddress := netip.MustParseAddr("192.0.2.1")
-	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = peer.Close() })
-	recorder := testanyconnect.NewRecorder(scenario.Cookie)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,17 +482,17 @@ func TestAnyConnectRemoteDNSUsesTunnelAndOverridePrecedence(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			scenario := testanyconnect.BasicCSTPScenario()
+			scenario := testopenconnect.BasicAnyConnectScenario()
 			scenario.Configuration.DNS = []netip.Addr{testCase.serverDNS}
 			peerAddress := netip.MustParseAddr("192.0.2.1")
-			peer, err := testanyconnect.NewIPv4TCPUDPEchoPeerWithDNS(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort, 53, map[string]netip.Addr{
+			peer, err := testopenconnect.NewIPv4TCPUDPEchoPeerWithDNS(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort, 53, map[string]netip.Addr{
 				"service.internal": peerAddress,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = peer.Close() }()
-			gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+			gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -525,22 +525,22 @@ func TestAnyConnectRemoteDNSUsesTunnelAndOverridePrecedence(t *testing.T) {
 			}
 		})
 	}
-	writeAnyConnectEvidence(t, "dns", "server-and-override-private-dns", []testanyconnect.Capability{testanyconnect.CapabilityPrivateDNS})
+	writeAnyConnectEvidence(t, "dns", "server-and-override-private-dns", []testopenconnect.Capability{testopenconnect.CapabilityPrivateDNS})
 }
 
 func TestAnyConnectRekeyAndEOFKeepGenerationAndUDPFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.CSTP.RekeyInterval = 2 * time.Second
 	peerAddress := netip.MustParseAddr("192.0.2.1")
-	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = peer.Close() }()
-	recorder := testanyconnect.NewRecorder(scenario.Cookie)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -600,25 +600,25 @@ func TestAnyConnectRekeyAndEOFKeepGenerationAndUDPFlow(t *testing.T) {
 		t.Fatal("same network identity replaced the session or stack generation during reconnect")
 	}
 	exchange("after reconnect")
-	writeAnyConnectEvidence(t, "reconnect", scenario.Name+"-rekey-eof", []testanyconnect.Capability{
-		testanyconnect.CapabilityRekey,
-		testanyconnect.CapabilityReconnect,
+	writeAnyConnectEvidence(t, "reconnect", scenario.Name+"-rekey-eof", []testopenconnect.Capability{
+		testopenconnect.CapabilityRekey,
+		testopenconnect.CapabilityReconnect,
 	})
 }
 
 func TestAnyConnectDPDBlackholeKeepsGenerationAndUDPFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.CSTP.BlackholeDPD = true
 	peerAddress := netip.MustParseAddr("192.0.2.1")
-	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = peer.Close() }()
-	recorder := testanyconnect.NewRecorder(scenario.Cookie)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,29 +671,29 @@ func TestAnyConnectDPDBlackholeKeepsGenerationAndUDPFlow(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	writeAnyConnectEvidence(t, "dpd-blackhole", scenario.Name+"-dpd-blackhole", []testanyconnect.Capability{
-		testanyconnect.CapabilityDPD,
-		testanyconnect.CapabilityReconnect,
+	writeAnyConnectEvidence(t, "dpd-blackhole", scenario.Name+"-dpd-blackhole", []testopenconnect.Capability{
+		testopenconnect.CapabilityDPD,
+		testopenconnect.CapabilityReconnect,
 	})
 }
 
 func TestAnyConnectReconnectReplacesChangedMTUGeneration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.Configuration.Routes = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
 	scenario.Configuration.ExcludedRoutes = []netip.Prefix{netip.MustParsePrefix("198.18.0.0/15")}
 	reconfigured := scenario.Configuration
 	reconfigured.MTU = 1280
 	scenario.CSTP.ReconnectConfiguration = &reconfigured
 	peerAddress := netip.MustParseAddr("192.0.2.1")
-	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = peer.Close() }()
-	recorder := testanyconnect.NewRecorder(scenario.Cookie)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -750,30 +750,30 @@ func TestAnyConnectReconnectReplacesChangedMTUGeneration(t *testing.T) {
 	}
 	defer newFlow.Close()
 	exchangeAnyConnectUDP(t, ctx, newFlow, destination, "after identity change")
-	writeAnyConnectEvidence(t, "network-change", scenario.Name+"-mtu-routes", []testanyconnect.Capability{
-		testanyconnect.CapabilityNetworkMTU,
-		testanyconnect.CapabilityRoutes,
+	writeAnyConnectEvidence(t, "network-change", scenario.Name+"-mtu-routes", []testopenconnect.Capability{
+		testopenconnect.CapabilityNetworkMTU,
+		testopenconnect.CapabilityRoutes,
 	})
 }
 
 func TestAnyConnectReconnectsAfterUnderlaySwitch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	peerAddress := netip.MustParseAddr("192.0.2.1")
-	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = peer.Close() }()
-	primaryRecorder := testanyconnect.NewRecorder(scenario.Cookie)
-	primary, err := testanyconnect.StartGateway(ctx, scenario, peer, primaryRecorder)
+	primaryRecorder := testopenconnect.NewRecorder(scenario.Cookie)
+	primary, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, primaryRecorder)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = primary.Close() }()
-	secondaryRecorder := testanyconnect.NewRecorder(scenario.Cookie)
-	secondary, err := testanyconnect.StartGateway(ctx, scenario, peer, secondaryRecorder)
+	secondaryRecorder := testopenconnect.NewRecorder(scenario.Cookie)
+	secondary, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, secondaryRecorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -825,22 +825,22 @@ func TestAnyConnectReconnectsAfterUnderlaySwitch(t *testing.T) {
 	if countRecords(primaryRecorder.Records(), "cstp-connect") != 1 {
 		t.Fatalf("primary gateway was dialed after underlay switch: %v", primaryRecorder.Records())
 	}
-	writeAnyConnectEvidence(t, "underlay-switch", scenario.Name+"-underlay-switch", []testanyconnect.Capability{
-		testanyconnect.CapabilityReconnect,
-		testanyconnect.CapabilityUnderlay,
+	writeAnyConnectEvidence(t, "underlay-switch", scenario.Name+"-underlay-switch", []testopenconnect.Capability{
+		testopenconnect.CapabilityReconnect,
+		testopenconnect.CapabilityUnderlay,
 	})
 }
 
 func TestOpenConnectReconnectTimeoutIsBoundedAndOutboundRecovers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	scenario := testopenconnect.BasicAnyConnectScenario()
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	recorder := testanyconnect.NewRecorder(scenario.Cookie)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -881,12 +881,12 @@ func TestOpenConnectReconnectTimeoutIsBoundedAndOutboundRecovers(t *testing.T) {
 	}
 	outbound.access.Unlock()
 
-	healthyPeer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	healthyPeer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	healthyRecorder := testanyconnect.NewRecorder(scenario.Cookie)
-	healthyGateway, err := testanyconnect.StartGateway(ctx, scenario, healthyPeer, healthyRecorder)
+	healthyRecorder := testopenconnect.NewRecorder(scenario.Cookie)
+	healthyGateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, healthyPeer, healthyRecorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -907,13 +907,13 @@ func TestOpenConnectReconnectTimeoutIsBoundedAndOutboundRecovers(t *testing.T) {
 func TestAnyConnectCloseStopsActiveReconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	scenario := testopenconnect.BasicAnyConnectScenario()
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	recorder := testanyconnect.NewRecorder(scenario.Cookie)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -963,15 +963,15 @@ func TestAnyConnectReleaseStress(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	peerAddress := netip.MustParseAddr("192.0.2.1")
-	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = peer.Close() }()
-	recorder := testanyconnect.NewRecorder(scenario.Cookie)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1062,16 +1062,16 @@ func runAnyConnectSoak(t *testing.T, dtlsTransport string) {
 	baselineFDs := countAnyConnectFileDescriptors()
 	ctx, cancel := context.WithTimeout(context.Background(), soakDuration+30*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.ModernDTLS = dtlsTransport == "modern"
 	scenario.LegacyDTLS = dtlsTransport == "legacy"
 	peerAddress := netip.MustParseAddr("192.0.2.1")
-	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
-	recorder := testanyconnect.NewRecorder(scenario.Cookie)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		_ = peer.Close()
 		t.Fatal(err)
@@ -1294,14 +1294,14 @@ func countAnyConnectFileDescriptors() int {
 func TestAnyConnectConcurrentStartupAndCallerCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.CSTP.ResponseDelay = 150 * time.Millisecond
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	recorder := testanyconnect.NewRecorder(scenario.Cookie)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1371,13 +1371,13 @@ func TestAnyConnectConcurrentStartupAndCallerCancellation(t *testing.T) {
 func TestAnyConnectCloseDuringStartup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.CSTP.ResponseDelay = time.Second
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1410,14 +1410,14 @@ func TestAnyConnectCloseDuringStartup(t *testing.T) {
 func TestAnyConnectSessionStopsOnTunnelReadFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.CSTP.MalformedDataHeader = true
 	peerAddress := netip.MustParseAddr("192.0.2.1")
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(peerAddress)
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(peerAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1428,7 +1428,7 @@ func TestAnyConnectSessionStopsOnTunnelReadFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := testanyconnect.BuildIPv4ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), peerAddress, 1, 1, []byte("malformed-response"))
+	request, err := testopenconnect.BuildIPv4ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), peerAddress, 1, 1, []byte("malformed-response"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1452,8 +1452,8 @@ func TestAnyConnectSessionStopsOnTunnelReadFailure(t *testing.T) {
 func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
-	scenario.Authentication = testanyconnect.AuthenticationScenario{
+	scenario := testopenconnect.BasicAnyConnectScenario()
+	scenario.Authentication = testopenconnect.AnyConnectAuthenticationScenario{
 		Enabled:           true,
 		Username:          "phase2-user",
 		Password:          "phase2-password",
@@ -1462,13 +1462,13 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 		CookieUses:        1,
 	}
 	peerAddress := netip.MustParseAddr("192.0.2.1")
-	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = peer.Close() }()
-	recorder := testanyconnect.NewRecorder(scenario.Cookie, scenario.Authentication.Password, scenario.Authentication.ChallengeResponse)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie, scenario.Authentication.Password, scenario.Authentication.ChallengeResponse)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1518,8 +1518,8 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 
 	rejectedScenario := scenario
 	rejectedScenario.Name = "missing-auth-provider"
-	rejectedRecorder := testanyconnect.NewRecorder(rejectedScenario.Cookie, rejectedScenario.Authentication.Password, rejectedScenario.Authentication.ChallengeResponse)
-	rejectedGateway, err := testanyconnect.StartGateway(ctx, rejectedScenario, peer, rejectedRecorder)
+	rejectedRecorder := testopenconnect.NewRecorder(rejectedScenario.Cookie, rejectedScenario.Authentication.Password, rejectedScenario.Authentication.ChallengeResponse)
+	rejectedGateway, err := testopenconnect.StartAnyConnectGateway(ctx, rejectedScenario, peer, rejectedRecorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1561,23 +1561,23 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 	if len(rejectedRecorder.Records()) != recordCount {
 		t.Fatalf("latched auth failure caused another login: before=%d after=%d", recordCount, len(rejectedRecorder.Records()))
 	}
-	writeAnyConnectEvidence(t, "auth-outbound", scenario.Name+"-provider-reauthentication-and-rejection", []testanyconnect.Capability{
-		testanyconnect.CapabilityAuth,
-		testanyconnect.CapabilityReauth,
+	writeAnyConnectEvidence(t, "auth-outbound", scenario.Name+"-provider-reauthentication-and-rejection", []testopenconnect.Capability{
+		testopenconnect.CapabilityAuth,
+		testopenconnect.CapabilityReauth,
 	})
 }
 
 func TestOpenConnectHandshakeTimeoutRetriesAfterBackoff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.CSTP.ResponseDelay = 2 * time.Second
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	recorder := testanyconnect.NewRecorder(scenario.Cookie)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1596,13 +1596,13 @@ func TestOpenConnectHandshakeTimeoutRetriesAfterBackoff(t *testing.T) {
 	if err := gateway.Close(); err != nil {
 		t.Fatal(err)
 	}
-	healthyScenario := testanyconnect.BasicCSTPScenario()
-	healthyPeer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	healthyScenario := testopenconnect.BasicAnyConnectScenario()
+	healthyPeer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	healthyRecorder := testanyconnect.NewRecorder(healthyScenario.Cookie)
-	healthyGateway, err := testanyconnect.StartGateway(ctx, healthyScenario, healthyPeer, healthyRecorder)
+	healthyRecorder := testopenconnect.NewRecorder(healthyScenario.Cookie)
+	healthyGateway, err := testopenconnect.StartAnyConnectGateway(ctx, healthyScenario, healthyPeer, healthyRecorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1643,11 +1643,11 @@ func TestOpenConnectHandshakeContext(t *testing.T) {
 	}
 }
 
-func newFakeAnyConnectOutbound(t testing.TB, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int) *OpenConnect {
+func newFakeAnyConnectOutbound(t testing.TB, gateway *testopenconnect.AnyConnectGateway, scenario testopenconnect.AnyConnectScenario, dialer C.Dialer, handshakeTimeout int) *OpenConnect {
 	return newFakeAnyConnectOutboundWithOption(t, gateway, scenario, dialer, handshakeTimeout, nil)
 }
 
-func newFakeAnyConnectOutboundWithOption(t testing.TB, gateway *testanyconnect.Gateway, scenario testanyconnect.Scenario, dialer C.Dialer, handshakeTimeout int, mutate func(*OpenConnectOption)) *OpenConnect {
+func newFakeAnyConnectOutboundWithOption(t testing.TB, gateway *testopenconnect.AnyConnectGateway, scenario testopenconnect.AnyConnectScenario, dialer C.Dialer, handshakeTimeout int, mutate func(*OpenConnectOption)) *OpenConnect {
 	t.Helper()
 	_, portText, err := net.SplitHostPort(gateway.Address())
 	if err != nil {
@@ -1664,7 +1664,7 @@ func newFakeAnyConnectOutboundWithOption(t testing.TB, gateway *testanyconnect.G
 		Server:           gateway.ServerName(),
 		Port:             port,
 		Cookie:           scenario.Cookie,
-		CA:               string(testanyconnect.RootCAPEM()),
+		CA:               string(testopenconnect.AnyConnectRootCAPEM()),
 		ServerName:       gateway.ServerName(),
 		HandshakeTimeout: handshakeTimeout,
 		DTLSMode:         "off",
@@ -1679,7 +1679,7 @@ func newFakeAnyConnectOutboundWithOption(t testing.TB, gateway *testanyconnect.G
 	return outbound
 }
 
-func countRecords(records []testanyconnect.Record, kind string) int {
+func countRecords(records []testopenconnect.Record, kind string) int {
 	count := 0
 	for _, record := range records {
 		if record.Kind == kind {
@@ -1689,7 +1689,7 @@ func countRecords(records []testanyconnect.Record, kind string) int {
 	return count
 }
 
-func waitAnyConnectRecordCount(t *testing.T, ctx context.Context, recorder *testanyconnect.Recorder, kind string, minimum uint64) uint64 {
+func waitAnyConnectRecordCount(t *testing.T, ctx context.Context, recorder *testopenconnect.Recorder, kind string, minimum uint64) uint64 {
 	t.Helper()
 	timer := time.NewTimer(time.Second)
 	defer timer.Stop()
@@ -1711,25 +1711,25 @@ func waitAnyConnectRecordCount(t *testing.T, ctx context.Context, recorder *test
 }
 
 func writeAnyConnectOutboundEvidence(t *testing.T, scenario string) {
-	writeAnyConnectEvidence(t, "outbound", scenario+"-tcp-udp-echo", []testanyconnect.Capability{
-		testanyconnect.CapabilityCookieCSTP,
-		testanyconnect.CapabilityPacketIPv4,
+	writeAnyConnectEvidence(t, "outbound", scenario+"-tcp-udp-echo", []testopenconnect.Capability{
+		testopenconnect.CapabilityCookieCSTP,
+		testopenconnect.CapabilityPacketIPv4,
 	})
 }
 
-func writeAnyConnectEvidence(t *testing.T, suffix string, scenario string, capabilities []testanyconnect.Capability) {
+func writeAnyConnectEvidence(t *testing.T, suffix string, scenario string, capabilities []testopenconnect.Capability) {
 	writeAnyConnectEvidenceForTransport(t, suffix, scenario, capabilities, "cstp")
 }
 
-func writeAnyConnectEvidenceForAddress(t *testing.T, suffix string, scenario string, capabilities []testanyconnect.Capability, address string) {
+func writeAnyConnectEvidenceForAddress(t *testing.T, suffix string, scenario string, capabilities []testopenconnect.Capability, address string) {
 	writeAnyConnectEvidenceForTransportAndAddress(t, suffix, scenario, capabilities, "cstp", address)
 }
 
-func writeAnyConnectEvidenceForTransport(t *testing.T, suffix string, scenario string, capabilities []testanyconnect.Capability, transport string) {
+func writeAnyConnectEvidenceForTransport(t *testing.T, suffix string, scenario string, capabilities []testopenconnect.Capability, transport string) {
 	writeAnyConnectEvidenceForTransportAndAddress(t, suffix, scenario, capabilities, transport, "ipv4")
 }
 
-func writeAnyConnectEvidenceForTransportAndAddress(t *testing.T, suffix string, scenario string, capabilities []testanyconnect.Capability, transport string, address string) {
+func writeAnyConnectEvidenceForTransportAndAddress(t *testing.T, suffix string, scenario string, capabilities []testopenconnect.Capability, transport string, address string) {
 	t.Helper()
 	path := os.Getenv("MIHOMO_ANYCONNECT_MATRIX")
 	if path == "" {
@@ -1737,12 +1737,12 @@ func writeAnyConnectEvidenceForTransportAndAddress(t *testing.T, suffix string, 
 	}
 	extension := filepath.Ext(path)
 	path = strings.TrimSuffix(path, extension) + "-" + suffix + extension
-	matrix := testanyconnect.NewCapabilityMatrix()
+	matrix := testopenconnect.NewCapabilityMatrix()
 	for _, capability := range capabilities {
-		if err := matrix.Record(testanyconnect.Evidence{
+		if err := matrix.Record(testopenconnect.Evidence{
 			Capability: capability,
 			Scenario:   scenario,
-			Driver:     testanyconnect.DriverOutbound,
+			Driver:     testopenconnect.DriverOutbound,
 			Gateway:    "fake",
 			Transport:  transport,
 			Address:    address,

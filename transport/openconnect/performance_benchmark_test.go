@@ -7,14 +7,14 @@ import (
 	"testing"
 	"time"
 
-	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
+	testopenconnect "github.com/metacubex/mihomo/internal/testutil/openconnect"
 )
 
 // BenchmarkAnyConnectP3DataPlaneReady isolates the steady-state revision and
 // DTLS readiness gate. Setup first proves that a revision-tagged packet makes a
 // complete modern-DTLS round trip; every timed lookup must return that revision.
 func BenchmarkAnyConnectP3DataPlaneReady(b *testing.B) {
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.ModernDTLS = true
 	scenario.DTLSMTU = 1200
 	scenario.DTLSAppID = []byte("mihomo-dtls-app")
@@ -46,7 +46,7 @@ func BenchmarkAnyConnectP3DataPlaneReady(b *testing.B) {
 	if revision == 0 || client.ActiveTransport() != "dtls" {
 		b.Fatalf("invalid benchmark data plane: revision=%d transport=%q", revision, client.ActiveTransport())
 	}
-	request, err := testanyconnect.BuildIPv4ICMPEchoRequest(
+	request, err := testopenconnect.BuildIPv4ICMPEchoRequest(
 		netip.MustParseAddr("192.0.2.2"),
 		netip.MustParseAddr("192.0.2.1"),
 		73,

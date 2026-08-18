@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"bufio"
@@ -29,9 +29,9 @@ const (
 	fakeGatewayTimeout    = 5 * time.Second
 )
 
-// Gateway is a hermetic TLS/CSTP server used only by protocol tests.
-type Gateway struct {
-	scenario       Scenario
+// AnyConnectGateway is a hermetic TLS/CSTP server used only by protocol tests.
+type AnyConnectGateway struct {
+	scenario       AnyConnectScenario
 	peer           PacketPeer
 	recorder       *Recorder
 	listener       net.Listener
@@ -75,18 +75,18 @@ type Gateway struct {
 }
 
 var (
-	//go:embed testdata/fake_gateway/ca.pem
+	//go:embed testdata/anyconnect_gateway/ca.pem
 	fakeGatewayCAPEM []byte
 
-	//go:embed testdata/fake_gateway/server.pem
+	//go:embed testdata/anyconnect_gateway/server.pem
 	fakeGatewayServerPEM []byte
 
-	//go:embed testdata/fake_gateway/server-key.pem
+	//go:embed testdata/anyconnect_gateway/server-key.pem
 	fakeGatewayServerKeyPEM []byte
 )
 
-// StartGateway starts an independent fake gateway on an ephemeral loopback port.
-func StartGateway(parent context.Context, scenario Scenario, peer PacketPeer, recorder *Recorder) (*Gateway, error) {
+// StartAnyConnectGateway starts an independent fake gateway on an ephemeral loopback port.
+func StartAnyConnectGateway(parent context.Context, scenario AnyConnectScenario, peer PacketPeer, recorder *Recorder) (*AnyConnectGateway, error) {
 	if parent == nil {
 		return nil, errors.New("gateway context is required")
 	}
@@ -113,7 +113,7 @@ func StartGateway(parent context.Context, scenario Scenario, peer PacketPeer, re
 		return nil, fmt.Errorf("listen for fake gateway: %w", err)
 	}
 	ctx, cancel := context.WithCancel(parent)
-	gateway := &Gateway{
+	gateway := &AnyConnectGateway{
 		scenario:        cloneScenario(scenario),
 		peer:            peer,
 		recorder:        recorder,
@@ -181,7 +181,7 @@ func StartGateway(parent context.Context, scenario Scenario, peer PacketPeer, re
 }
 
 // Address returns the ephemeral TCP address of the gateway.
-func (g *Gateway) Address() string {
+func (g *AnyConnectGateway) Address() string {
 	if g == nil || g.listener == nil {
 		return ""
 	}
@@ -189,7 +189,7 @@ func (g *Gateway) Address() string {
 }
 
 // DropCSTPConnections forces an established-tunnel EOF and returns the number closed.
-func (g *Gateway) DropCSTPConnections() int {
+func (g *AnyConnectGateway) DropCSTPConnections() int {
 	if g == nil {
 		return 0
 	}
@@ -210,25 +210,25 @@ func (g *Gateway) DropCSTPConnections() int {
 }
 
 // ServerName returns the certificate name expected by the fake gateway.
-func (g *Gateway) ServerName() string {
+func (g *AnyConnectGateway) ServerName() string {
 	return fakeGatewayServerName
 }
 
 // RootCAs returns a clone of the trust roots for this gateway instance.
-func (g *Gateway) RootCAs() *x509.CertPool {
+func (g *AnyConnectGateway) RootCAs() *x509.CertPool {
 	if g == nil || g.roots == nil {
 		return nil
 	}
 	return g.roots.Clone()
 }
 
-// RootCAPEM returns a caller-owned copy of the fixed fake gateway CA.
-func RootCAPEM() []byte {
+// AnyConnectRootCAPEM returns a caller-owned copy of the fixed fake gateway CA.
+func AnyConnectRootCAPEM() []byte {
 	return append([]byte(nil), fakeGatewayCAPEM...)
 }
 
-// ServerSPKISHA256 returns the fake gateway server's OpenConnect pin form.
-func ServerSPKISHA256() (string, error) {
+// AnyConnectServerSPKISHA256 returns the fake gateway server's OpenConnect pin form.
+func AnyConnectServerSPKISHA256() (string, error) {
 	block, _ := pem.Decode(fakeGatewayServerPEM)
 	if block == nil || block.Type != "CERTIFICATE" {
 		return "", errors.New("decode fake gateway server certificate")
@@ -242,7 +242,7 @@ func ServerSPKISHA256() (string, error) {
 }
 
 // Close stops the listener, waits for handlers, and returns unexpected server failures.
-func (g *Gateway) Close() error {
+func (g *AnyConnectGateway) Close() error {
 	if g == nil {
 		return nil
 	}
@@ -281,7 +281,7 @@ func (g *Gateway) Close() error {
 	return g.closeErr
 }
 
-func (g *Gateway) acceptLoop() {
+func (g *AnyConnectGateway) acceptLoop() {
 	defer g.waitGroup.Done()
 	for {
 		connection, err := g.listener.Accept()
@@ -312,7 +312,7 @@ func (g *Gateway) acceptLoop() {
 	}
 }
 
-func (g *Gateway) consumeDroppedCSTPConnection(connection net.Conn) bool {
+func (g *AnyConnectGateway) consumeDroppedCSTPConnection(connection net.Conn) bool {
 	g.cstpLock.Lock()
 	_, dropped := g.cstpDropped[connection]
 	delete(g.cstpDropped, connection)
@@ -320,7 +320,7 @@ func (g *Gateway) consumeDroppedCSTPConnection(connection net.Conn) bool {
 	return dropped
 }
 
-func (g *Gateway) handleConnection(connection net.Conn) error {
+func (g *AnyConnectGateway) handleConnection(connection net.Conn) error {
 	if err := connection.SetDeadline(time.Now().Add(fakeGatewayTimeout)); err != nil {
 		return fmt.Errorf("set fake gateway connection deadline: %w", err)
 	}
@@ -470,7 +470,7 @@ func (g *Gateway) handleConnection(connection net.Conn) error {
 	}
 }
 
-func (g *Gateway) writeConnectResponse(connection net.Conn, configuration NetworkConfiguration) error {
+func (g *AnyConnectGateway) writeConnectResponse(connection net.Conn, configuration AnyConnectNetworkConfiguration) error {
 	var response strings.Builder
 	response.WriteString("HTTP/1.1 200 CONNECTED\r\n")
 	response.WriteString("X-CSTP-Version: 1\r\n")
@@ -602,7 +602,7 @@ func (g *Gateway) writeConnectResponse(connection net.Conn, configuration Networ
 	return nil
 }
 
-func (g *Gateway) addError(err error) {
+func (g *AnyConnectGateway) addError(err error) {
 	if err == nil {
 		return
 	}
@@ -611,7 +611,7 @@ func (g *Gateway) addError(err error) {
 	g.errorLock.Unlock()
 }
 
-func (g *Gateway) record(kind string, message string) {
+func (g *AnyConnectGateway) record(kind string, message string) {
 	if g.recorder != nil {
 		g.recorder.Add(kind, message)
 	}
@@ -626,7 +626,7 @@ func writeHTTPRejection(writer net.Conn, status int) error {
 	return writeFull(writer, []byte(response))
 }
 
-func cloneScenario(scenario Scenario) Scenario {
+func cloneScenario(scenario AnyConnectScenario) AnyConnectScenario {
 	scenario.Configuration = cloneNetworkConfiguration(scenario.Configuration)
 	scenario.DTLSAppID = append([]byte(nil), scenario.DTLSAppID...)
 	if scenario.CSTP.ReconnectConfiguration != nil {
@@ -642,7 +642,7 @@ func cloneScenario(scenario Scenario) Scenario {
 	return scenario
 }
 
-func cloneNetworkConfiguration(configuration NetworkConfiguration) NetworkConfiguration {
+func cloneNetworkConfiguration(configuration AnyConnectNetworkConfiguration) AnyConnectNetworkConfiguration {
 	configuration.Addresses = append([]netip.Prefix(nil), configuration.Addresses...)
 	configuration.Routes = append([]netip.Prefix(nil), configuration.Routes...)
 	configuration.ExcludedRoutes = append([]netip.Prefix(nil), configuration.ExcludedRoutes...)

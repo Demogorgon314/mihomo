@@ -19,8 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
-
 	"github.com/pion/dtls/v3"
 )
 
@@ -73,7 +71,7 @@ type F5Gateway struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	scenario F5Scenario
-	peer     testanyconnect.PacketPeer
+	peer     PacketPeer
 	server   *httptest.Server
 	dtls     net.Listener
 	caPEM    []byte
@@ -92,7 +90,7 @@ type F5Gateway struct {
 }
 
 // StartF5Gateway starts a hermetic F5 gateway on loopback.
-func StartF5Gateway(parent context.Context, scenario F5Scenario, peer testanyconnect.PacketPeer) (*F5Gateway, error) {
+func StartF5Gateway(parent context.Context, scenario F5Scenario, peer PacketPeer) (*F5Gateway, error) {
 	if parent == nil {
 		return nil, errors.New("F5 gateway context is required")
 	}
@@ -450,7 +448,7 @@ func (g *F5Gateway) servePPP(reader *bufio.Reader, connection net.Conn) error {
 				}
 			}
 		case pppProtocolIPv4:
-			replies, err := handlePacket(g.peer, payload)
+			replies, err := handlePeerPackets(g.peer, payload)
 			if err != nil {
 				return fmt.Errorf("handle F5 tunnel packet: %w", err)
 			}
@@ -470,21 +468,6 @@ func (g *F5Gateway) recordError(err error) {
 	g.errorAccess.Lock()
 	g.errors = append(g.errors, err)
 	g.errorAccess.Unlock()
-}
-
-type packetBatchPeer interface {
-	HandlePackets(packet []byte) ([][]byte, error)
-}
-
-func handlePacket(peer testanyconnect.PacketPeer, packet []byte) ([][]byte, error) {
-	if batchPeer, loaded := peer.(packetBatchPeer); loaded {
-		return batchPeer.HandlePackets(packet)
-	}
-	reply, err := peer.HandlePacket(packet)
-	if err != nil || len(reply) == 0 {
-		return nil, err
-	}
-	return [][]byte{reply}, nil
 }
 
 func readF5PPPFrame(reader *bufio.Reader) ([]byte, error) {

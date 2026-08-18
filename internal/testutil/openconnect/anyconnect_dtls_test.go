@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"bytes"
@@ -6,7 +6,7 @@ import (
 )
 
 func TestGatewayDTLSSessionOwnership(t *testing.T) {
-	gateway := new(Gateway)
+	gateway := new(AnyConnectGateway)
 	firstKey := []byte("first-session-key")
 	if !gateway.claimDTLSSession(firstKey, nil) {
 		t.Fatal("first DTLS session was rejected")
