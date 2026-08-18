@@ -35,7 +35,6 @@ func (generationTestClient) ReadPacketWithRevision(ctx context.Context) ([]byte,
 	return nil, 0, ctx.Err()
 }
 
-func (generationTestClient) WritePacketAtRevision([]byte, uint64) error { return nil }
 func (generationTestClient) WritePacketsAtRevision([][]byte, uint64) error {
 	return nil
 }
@@ -175,10 +174,6 @@ func (*outboundBatchTestClient) ReadPacketWithRevision(ctx context.Context) ([]b
 }
 
 func (*outboundBatchTestClient) WritePacket([]byte) error { return nil }
-func (*outboundBatchTestClient) WritePacketAtRevision([]byte, uint64) error {
-	return nil
-}
-
 func (c *outboundBatchTestClient) WritePacketsAtRevision(packets [][]byte, _ uint64) error {
 	values := make([]byte, len(packets))
 	for index, packet := range packets {
@@ -407,7 +402,6 @@ func TestAnyConnectGenerationReplacementClosesBlockedWriter(t *testing.T) {
 		closed:       make(chan struct{}),
 	}
 	session.generation = &openConnectGeneration{device: device, revision: 1, configuration: configuration}
-	session.configuration = configuration
 	session.signalInitial(nil)
 	session.wait.Add(1)
 	go session.runTunnelToStack()
@@ -486,7 +480,6 @@ func TestAnyConnectGenerationReplacementClosesBlockedWriter(t *testing.T) {
 	}
 }
 
-func (*packetSequenceTestClient) WritePacketAtRevision([]byte, uint64) error { return nil }
 func (*packetSequenceTestClient) WritePacketsAtRevision([][]byte, uint64) error {
 	return nil
 }
@@ -618,7 +611,7 @@ func TestAnyConnectNetworkConfigRejectsInvalidMTUAndAddress(t *testing.T) {
 		{name: "IPv6 MTU below minimum", config: oc.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("2001:db8::2/64")}, MTU: 1279}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			_, err := validateAnyConnectNetworkConfig(testCase.config)
+			_, err := validateOpenConnectNetworkConfig(testCase.config)
 			if err == nil || errors.Is(err, net.ErrClosed) {
 				t.Fatalf("expected a network configuration error, got %v", err)
 			}

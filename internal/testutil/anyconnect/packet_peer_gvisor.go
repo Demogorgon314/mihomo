@@ -35,9 +35,9 @@ const (
 	echoPeerQuietTimeout    = 2 * time.Millisecond
 )
 
-// IPv4TCPUDPEchoPeer terminates TCP and UDP flows in an independent gVisor
+// TCPUDPEchoPeer terminates TCP and UDP flows in an independent gVisor
 // stack and exposes its link as raw packets to the fake gateway.
-type IPv4TCPUDPEchoPeer struct {
+type TCPUDPEchoPeer struct {
 	stack    *stack.Stack
 	endpoint *channel.Endpoint
 	tcp      net.Listener
@@ -52,7 +52,7 @@ type IPv4TCPUDPEchoPeer struct {
 	version  int
 }
 
-func NewIPv4TCPUDPEchoPeer(parent context.Context, address netip.Addr, tcpPort uint16, udpPort uint16) (*IPv4TCPUDPEchoPeer, error) {
+func NewIPv4TCPUDPEchoPeer(parent context.Context, address netip.Addr, tcpPort uint16, udpPort uint16) (*TCPUDPEchoPeer, error) {
 	if !address.Is4() {
 		return nil, fmt.Errorf("IPv4 echo peer requires an IPv4 address: %s", address)
 	}
@@ -60,7 +60,7 @@ func NewIPv4TCPUDPEchoPeer(parent context.Context, address netip.Addr, tcpPort u
 }
 
 // NewIPv6TCPUDPEchoPeer terminates TCP and UDP flows at an IPv6 address.
-func NewIPv6TCPUDPEchoPeer(parent context.Context, address netip.Addr, tcpPort uint16, udpPort uint16) (*IPv4TCPUDPEchoPeer, error) {
+func NewIPv6TCPUDPEchoPeer(parent context.Context, address netip.Addr, tcpPort uint16, udpPort uint16) (*TCPUDPEchoPeer, error) {
 	if !address.Is6() {
 		return nil, fmt.Errorf("IPv6 echo peer requires an IPv6 address: %s", address)
 	}
@@ -68,7 +68,7 @@ func NewIPv6TCPUDPEchoPeer(parent context.Context, address netip.Addr, tcpPort u
 }
 
 // NewIPv4TCPUDPEchoPeerWithDNS also serves deterministic A/AAAA responses on dnsPort.
-func NewIPv4TCPUDPEchoPeerWithDNS(parent context.Context, address netip.Addr, tcpPort uint16, udpPort uint16, dnsPort uint16, names map[string]netip.Addr) (*IPv4TCPUDPEchoPeer, error) {
+func NewIPv4TCPUDPEchoPeerWithDNS(parent context.Context, address netip.Addr, tcpPort uint16, udpPort uint16, dnsPort uint16, names map[string]netip.Addr) (*TCPUDPEchoPeer, error) {
 	if !address.Is4() {
 		return nil, fmt.Errorf("IPv4 DNS echo peer requires an IPv4 address: %s", address)
 	}
@@ -78,7 +78,7 @@ func NewIPv4TCPUDPEchoPeerWithDNS(parent context.Context, address netip.Addr, tc
 	return newTCPUDPEchoPeer(parent, address, tcpPort, udpPort, dnsPort, names)
 }
 
-func newTCPUDPEchoPeer(parent context.Context, address netip.Addr, tcpPort uint16, udpPort uint16, dnsPort uint16, names map[string]netip.Addr) (*IPv4TCPUDPEchoPeer, error) {
+func newTCPUDPEchoPeer(parent context.Context, address netip.Addr, tcpPort uint16, udpPort uint16, dnsPort uint16, names map[string]netip.Addr) (*TCPUDPEchoPeer, error) {
 	if parent == nil {
 		return nil, errors.New("echo peer context is required")
 	}
@@ -149,7 +149,7 @@ func newTCPUDPEchoPeer(parent context.Context, address netip.Addr, tcpPort uint1
 		}
 	}
 	ctx, cancel := context.WithCancel(parent)
-	peer := &IPv4TCPUDPEchoPeer{
+	peer := &TCPUDPEchoPeer{
 		stack:    ipStack,
 		endpoint: endpoint,
 		tcp:      tcpListener,
@@ -173,7 +173,7 @@ func newTCPUDPEchoPeer(parent context.Context, address netip.Addr, tcpPort uint1
 	return peer, nil
 }
 
-func (p *IPv4TCPUDPEchoPeer) serveTCP(ctx context.Context) {
+func (p *TCPUDPEchoPeer) serveTCP(ctx context.Context) {
 	defer p.wait.Done()
 	for ctx.Err() == nil {
 		connection, err := p.tcp.Accept()
@@ -189,7 +189,7 @@ func (p *IPv4TCPUDPEchoPeer) serveTCP(ctx context.Context) {
 	}
 }
 
-func (p *IPv4TCPUDPEchoPeer) serveUDP(ctx context.Context) {
+func (p *TCPUDPEchoPeer) serveUDP(ctx context.Context) {
 	defer p.wait.Done()
 	buffer := make([]byte, 65535)
 	for ctx.Err() == nil {
@@ -203,7 +203,7 @@ func (p *IPv4TCPUDPEchoPeer) serveUDP(ctx context.Context) {
 	}
 }
 
-func (p *IPv4TCPUDPEchoPeer) serveDNS(ctx context.Context) {
+func (p *TCPUDPEchoPeer) serveDNS(ctx context.Context) {
 	defer p.wait.Done()
 	buffer := make([]byte, 4096)
 	for ctx.Err() == nil {
@@ -240,14 +240,14 @@ func (p *IPv4TCPUDPEchoPeer) serveDNS(ctx context.Context) {
 	}
 }
 
-func (p *IPv4TCPUDPEchoPeer) DNSQueries() int64 {
+func (p *TCPUDPEchoPeer) DNSQueries() int64 {
 	if p == nil {
 		return 0
 	}
 	return p.dnsCount.Load()
 }
 
-func (p *IPv4TCPUDPEchoPeer) HandlePacket(packet []byte) ([]byte, error) {
+func (p *TCPUDPEchoPeer) HandlePacket(packet []byte) ([]byte, error) {
 	replies, err := p.handlePackets(packet, false)
 	if err != nil || len(replies) == 0 {
 		return nil, err
@@ -255,11 +255,11 @@ func (p *IPv4TCPUDPEchoPeer) HandlePacket(packet []byte) ([]byte, error) {
 	return replies[0], nil
 }
 
-func (p *IPv4TCPUDPEchoPeer) HandlePackets(packet []byte) ([][]byte, error) {
+func (p *TCPUDPEchoPeer) HandlePackets(packet []byte) ([][]byte, error) {
 	return p.handlePackets(packet, true)
 }
 
-func (p *IPv4TCPUDPEchoPeer) handlePackets(packet []byte, collectAdditional bool) ([][]byte, error) {
+func (p *TCPUDPEchoPeer) handlePackets(packet []byte, collectAdditional bool) ([][]byte, error) {
 	if p == nil || p.endpoint == nil {
 		return nil, errors.New("TCP/UDP echo peer is closed")
 	}
@@ -372,7 +372,7 @@ func packetBytes(packet *stack.PacketBuffer) []byte {
 	return result
 }
 
-func (p *IPv4TCPUDPEchoPeer) Close() error {
+func (p *TCPUDPEchoPeer) Close() error {
 	if p == nil {
 		return nil
 	}

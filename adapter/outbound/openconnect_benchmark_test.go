@@ -357,7 +357,7 @@ func waitAnyConnectBenchmarkRecordCount(ctx context.Context, recorder *testanyco
 }
 
 type openConnectSingleReplyPeer struct {
-	peer *testanyconnect.IPv4TCPUDPEchoPeer
+	peer *testanyconnect.TCPUDPEchoPeer
 }
 
 func (p openConnectSingleReplyPeer) HandlePacket(packet []byte) ([]byte, error) {

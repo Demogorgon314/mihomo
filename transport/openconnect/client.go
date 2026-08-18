@@ -178,6 +178,7 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		}
 	}
 	authCtx, authCancel := context.WithCancel(ctx)
+	dtlsMode := normalizeDTLSMode(config.DTLSMode)
 	client := &Client{
 		authProvider:         authProvider,
 		authCtx:              authCtx,
@@ -187,7 +188,7 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		secrets:              configSecrets(config),
 		networkHandler:       config.OnNetworkConfig,
 		networkUpdated:       make(chan struct{}),
-		dtlsMode:             normalizeDTLSMode(config.DTLSMode),
+		dtlsMode:             dtlsMode,
 		transportMonitorDone: make(chan struct{}),
 	}
 	compressionDisabled := config.Compression == CompressionOff
@@ -220,8 +221,8 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		Version:                        config.Version,
 		LocalHostname:                  config.LocalHostname,
 		Mobile:                         mobileOptions,
-		NoUDP:                          normalizeDTLSMode(config.DTLSMode) == DTLSModeOff,
-		DTLSRequired:                   normalizeDTLSMode(config.DTLSMode) == DTLSModeRequire,
+		NoUDP:                          dtlsMode == DTLSModeOff,
+		DTLSRequired:                   dtlsMode == DTLSModeRequire,
 		LegacyDTLSDisabled:             config.LegacyDTLSDisabled,
 		DTLSLocalPort:                  config.DTLSLocalPort,
 		DTLSCipherSuites:               dtlsCipherSuites,
