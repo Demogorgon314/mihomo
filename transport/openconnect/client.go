@@ -461,7 +461,7 @@ func (c *Client) WritePacketsAtRevision(packets [][]byte, revision uint64) error
 	if err := c.ensureDTLSTransport(c.authCtx); err != nil {
 		return err
 	}
-	return c.core.WriteDataPacketsAtRevision(packets, revision)
+	return c.core.WriteDataPacketsDirectAtRevision(packets, revision)
 }
 
 func (c *Client) ActiveTransport() string {
