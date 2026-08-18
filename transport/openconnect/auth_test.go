@@ -87,7 +87,7 @@ func TestClientAuthProvidersIsolateConcurrentChallenges(t *testing.T) {
 		client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, provider, func(scenario *testopenconnect.AnyConnectScenario) {
 			scenario.Name = fmt.Sprintf("auth-session-%d", index)
 			scenario.Authentication.Challenge = challengeText
-			scenario.Authentication.ChallengeResponse = answer
+			scenario.Authentication.ChallengeResponses = []string{answer}
 		}, func(config *Config) {
 			config.Username = "phase2-user"
 			config.Password = "phase2-password"
@@ -268,7 +268,7 @@ func TestClientAuthGroupSelectProvider(t *testing.T) {
 	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, provider, func(scenario *testopenconnect.AnyConnectScenario) {
 		scenario.Authentication.AuthGroup = "engineering"
 		scenario.Authentication.Challenge = ""
-		scenario.Authentication.ChallengeResponse = ""
+		scenario.Authentication.ChallengeResponses = nil
 	}, func(config *Config) {
 		config.Username = "phase2-user"
 		config.Password = "phase2-password"
@@ -293,7 +293,6 @@ func TestClientAutomaticTOTPAndHOTP(t *testing.T) {
 		responses := []string{oathCode(secretBytes, counter-1), oathCode(secretBytes, counter), oathCode(secretBytes, counter+1)}
 		client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testopenconnect.AnyConnectScenario) {
 			scenario.Authentication.ChallengeResponses = responses
-			scenario.Authentication.ChallengeResponse = ""
 		}, func(config *Config) {
 			config.Username = "phase2-user"
 			config.Password = "phase2-password"
@@ -313,7 +312,7 @@ func TestClientAutomaticTOTPAndHOTP(t *testing.T) {
 	t.Run("hotp", func(t *testing.T) {
 		var persisted atomic.Uint64
 		client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testopenconnect.AnyConnectScenario) {
-			scenario.Authentication.ChallengeResponse = oathCode(secretBytes, 7)
+			scenario.Authentication.ChallengeResponses = []string{oathCode(secretBytes, 7)}
 		}, func(config *Config) {
 			config.Username = "phase2-user"
 			config.Password = "phase2-password"
@@ -347,7 +346,7 @@ func TestClientWithoutProviderDisablesExternalAuthentication(t *testing.T) {
 	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testopenconnect.AnyConnectScenario) {
 		scenario.Authentication.Browser = true
 		scenario.Authentication.Challenge = ""
-		scenario.Authentication.ChallengeResponse = ""
+		scenario.Authentication.ChallengeResponses = nil
 	}, func(config *Config) {
 		config.Username = "phase2-user"
 	})
@@ -371,7 +370,7 @@ func TestClientBrowserRequestEmitsEventWithProvider(t *testing.T) {
 	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, provider, func(scenario *testopenconnect.AnyConnectScenario) {
 		scenario.Authentication.Browser = true
 		scenario.Authentication.Challenge = ""
-		scenario.Authentication.ChallengeResponse = ""
+		scenario.Authentication.ChallengeResponses = nil
 	}, func(config *Config) {
 		config.Username = "phase2-user"
 	})
@@ -399,7 +398,7 @@ func TestClientHostScanIsReportedAndBlockedByPolicy(t *testing.T) {
 	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testopenconnect.AnyConnectScenario) {
 		scenario.Authentication.HostScan = true
 		scenario.Authentication.Challenge = ""
-		scenario.Authentication.ChallengeResponse = ""
+		scenario.Authentication.ChallengeResponses = nil
 	}, func(config *Config) {
 		config.Username = "phase2-user"
 	})
@@ -432,11 +431,11 @@ func newAuthenticatedTestClientWithScenario(t *testing.T, provider AuthProvider,
 	t.Helper()
 	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.Authentication = testopenconnect.AnyConnectAuthenticationScenario{
-		Enabled:           true,
-		Username:          "phase2-user",
-		Password:          "phase2-password",
-		Challenge:         "Phase 2 second factor",
-		ChallengeResponse: "phase2-answer",
+		Enabled:            true,
+		Username:           "phase2-user",
+		Password:           "phase2-password",
+		Challenge:          "Phase 2 second factor",
+		ChallengeResponses: []string{"phase2-answer"},
 	}
 	if mutateScenario != nil {
 		mutateScenario(&scenario)
@@ -446,11 +445,8 @@ func newAuthenticatedTestClientWithScenario(t *testing.T, provider AuthProvider,
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, testopenconnect.NewRecorder(
-		scenario.Cookie,
-		scenario.Authentication.Password,
-		scenario.Authentication.ChallengeResponse,
-	))
+	recorderSecrets := append([]string{scenario.Cookie, scenario.Authentication.Password}, scenario.Authentication.ChallengeResponses...)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, testopenconnect.NewRecorder(recorderSecrets...))
 	if err != nil {
 		cancel()
 		t.Fatal(err)

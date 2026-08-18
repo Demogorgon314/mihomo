@@ -39,8 +39,7 @@ func NewCountingRecorder() *Recorder {
 	return &Recorder{counts: make(map[string]uint64), countOnly: true}
 }
 
-// Add sanitizes and appends an event.
-func (r *Recorder) Add(kind string, message string) {
+func (r *Recorder) add(kind string, message string) {
 	if r == nil {
 		return
 	}
