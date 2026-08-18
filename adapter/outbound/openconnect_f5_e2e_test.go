@@ -11,7 +11,6 @@ import (
 	"time"
 
 	C "github.com/metacubex/mihomo/constant"
-	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
 	testopenconnect "github.com/metacubex/mihomo/internal/testutil/openconnect"
 	oc "github.com/metacubex/mihomo/transport/openconnect"
 )
@@ -20,7 +19,7 @@ func TestF5OutboundTCPAndUDPPPPOverTLS(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	scenario := testopenconnect.BasicF5Scenario()
-	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, scenario.PeerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, scenario.PeerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +100,7 @@ func TestF5OutboundCertificateDTLSAndTLSFallback(t *testing.T) {
 	defer cancel()
 	scenario := testopenconnect.BasicF5Scenario()
 	scenario.DTLS = true
-	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, scenario.PeerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, scenario.PeerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		t.Fatal(err)
 	}

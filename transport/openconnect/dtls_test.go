@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
+	testopenconnect "github.com/metacubex/mihomo/internal/testutil/openconnect"
 	openconnect "github.com/sagernet/sing-openconnect"
 	"github.com/sagernet/sing/common/logger"
 )
@@ -346,7 +346,7 @@ func TestClientDTLSHandshakeFailures(t *testing.T) {
 }
 
 func TestClientDTLSInjectedResumption(t *testing.T) {
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.ModernDTLS = true
 	scenario.InjectedDTLS = true
 	client, gateway, _, ctx := newDTLSTestClientForScenario(t, scenario, DTLSModeRequire, false, "")
@@ -369,7 +369,7 @@ func TestClientDTLSInjectedResumption(t *testing.T) {
 }
 
 func TestClientLegacyDTLSCompatibilityAndPolicy(t *testing.T) {
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.LegacyDTLS = true
 
 	t.Run("OpenConnect compatible default", func(t *testing.T) {
@@ -408,7 +408,7 @@ func TestClientLegacyDTLSCompatibilityAndPolicy(t *testing.T) {
 func TestClientLegacyDTLSSecurityFaults(t *testing.T) {
 	for _, fault := range []string{"downgrade-version", "unsupported-cipher", "bad-finished"} {
 		t.Run(fault, func(t *testing.T) {
-			scenario := testanyconnect.BasicCSTPScenario()
+			scenario := testopenconnect.BasicAnyConnectScenario()
 			scenario.LegacyDTLS = true
 			scenario.LegacyDTLSFault = fault
 			client, gateway, _, ctx := newDTLSTestClientForScenario(t, scenario, DTLSModeRequire, false, "")
@@ -424,7 +424,7 @@ func TestClientLegacyDTLSSecurityFaults(t *testing.T) {
 
 	for _, fault := range []string{"bad-data-mac", "bad-padding"} {
 		t.Run(fault, func(t *testing.T) {
-			scenario := testanyconnect.BasicCSTPScenario()
+			scenario := testopenconnect.BasicAnyConnectScenario()
 			scenario.LegacyDTLS = true
 			scenario.LegacyDTLSFault = fault
 			client, gateway, _, ctx := newDTLSTestClientForScenario(t, scenario, DTLSModeAuto, false, "")
@@ -441,7 +441,7 @@ func TestClientLegacyDTLSSecurityFaults(t *testing.T) {
 	}
 
 	t.Run("duplicate and replay", func(t *testing.T) {
-		scenario := testanyconnect.BasicCSTPScenario()
+		scenario := testopenconnect.BasicAnyConnectScenario()
 		scenario.LegacyDTLS = true
 		scenario.LegacyDTLSFault = "duplicate-data"
 		client, gateway, _, ctx := newDTLSTestClientForScenario(t, scenario, DTLSModeAuto, false, "")
@@ -460,7 +460,7 @@ func TestClientLegacyDTLSSecurityFaults(t *testing.T) {
 	})
 
 	t.Run("out of order records", func(t *testing.T) {
-		scenario := testanyconnect.BasicCSTPScenario()
+		scenario := testopenconnect.BasicAnyConnectScenario()
 		scenario.LegacyDTLS = true
 		scenario.LegacyDTLSFault = "reorder-data"
 		client, gateway, _, ctx := newDTLSTestClientForScenario(t, scenario, DTLSModeAuto, false, "")
@@ -478,36 +478,36 @@ func TestClientLegacyDTLSSecurityFaults(t *testing.T) {
 	})
 }
 
-func newDTLSTestClient(t testing.TB, mode string, failUDP bool, fault string) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
+func newDTLSTestClient(t testing.TB, mode string, failUDP bool, fault string) (*Client, *testopenconnect.AnyConnectGateway, *dtlsTestDialer, context.Context) {
 	return newDTLSTestClientWithLogger(t, mode, failUDP, fault, nil)
 }
 
-func newDTLSTestClientWithLogger(t testing.TB, mode string, failUDP bool, fault string, clientLogger logger.ContextLogger) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
+func newDTLSTestClientWithLogger(t testing.TB, mode string, failUDP bool, fault string, clientLogger logger.ContextLogger) (*Client, *testopenconnect.AnyConnectGateway, *dtlsTestDialer, context.Context) {
 	t.Helper()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.ModernDTLS = true
 	scenario.DTLSMTU = 1200
 	scenario.DTLSAppID = []byte("mihomo-dtls-app")
 	return newDTLSTestClientForScenarioWithLegacyTimeout(t, scenario, mode, failUDP, fault, true, 8*time.Second, clientLogger)
 }
 
-func newDTLSTestClientForScenario(t testing.TB, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
+func newDTLSTestClientForScenario(t testing.TB, scenario testopenconnect.AnyConnectScenario, mode string, failUDP bool, fault string) (*Client, *testopenconnect.AnyConnectGateway, *dtlsTestDialer, context.Context) {
 	return newDTLSTestClientForScenarioWithLegacy(t, scenario, mode, failUDP, fault, true)
 }
 
-func newDTLSTestClientForScenarioWithLegacy(t testing.TB, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string, legacyDTLS bool) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
+func newDTLSTestClientForScenarioWithLegacy(t testing.TB, scenario testopenconnect.AnyConnectScenario, mode string, failUDP bool, fault string, legacyDTLS bool) (*Client, *testopenconnect.AnyConnectGateway, *dtlsTestDialer, context.Context) {
 	return newDTLSTestClientForScenarioWithLegacyTimeout(t, scenario, mode, failUDP, fault, legacyDTLS, 8*time.Second, nil)
 }
 
-func newDTLSTestClientForScenarioWithLegacyTimeout(t testing.TB, scenario testanyconnect.Scenario, mode string, failUDP bool, fault string, legacyDTLS bool, timeout time.Duration, testLogger ...logger.ContextLogger) (*Client, *testanyconnect.Gateway, *dtlsTestDialer, context.Context) {
+func newDTLSTestClientForScenarioWithLegacyTimeout(t testing.TB, scenario testopenconnect.AnyConnectScenario, mode string, failUDP bool, fault string, legacyDTLS bool, timeout time.Duration, testLogger ...logger.ContextLogger) (*Client, *testopenconnect.AnyConnectGateway, *dtlsTestDialer, context.Context) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	t.Cleanup(cancel)
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +528,7 @@ func newDTLSTestClientForScenarioWithLegacyTimeout(t testing.TB, scenario testan
 		Server:               "https://" + gateway.ServerName() + ":" + port,
 		Cookie:               scenario.Cookie,
 		ServerName:           gateway.ServerName(),
-		CertificateAuthority: testanyconnect.RootCAPEM(),
+		CertificateAuthority: testopenconnect.AnyConnectRootCAPEM(),
 		DTLSMode:             mode,
 		DTLSKeyExchange:      dtlsKeyExchange,
 		LegacyDTLSDisabled:   !legacyDTLS,
@@ -570,7 +570,7 @@ func exchangeFacadeICMP(t *testing.T, ctx context.Context, client *Client, paylo
 
 func writeFacadeICMP(t *testing.T, client *Client, sequence uint16, payload string) {
 	t.Helper()
-	request, err := testanyconnect.BuildIPv4ICMPEchoRequest(netip.MustParseAddr("192.0.2.2"), netip.MustParseAddr("192.0.2.1"), 61, sequence, []byte(payload))
+	request, err := testopenconnect.BuildIPv4ICMPEchoRequest(netip.MustParseAddr("192.0.2.2"), netip.MustParseAddr("192.0.2.1"), 61, sequence, []byte(payload))
 	if err != nil {
 		t.Fatal(err)
 	}

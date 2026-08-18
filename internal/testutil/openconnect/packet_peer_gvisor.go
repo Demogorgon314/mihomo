@@ -1,6 +1,6 @@
 //go:build with_gvisor
 
-package anyconnect
+package openconnect
 
 import (
 	"context"

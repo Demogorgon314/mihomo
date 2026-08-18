@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"bytes"
@@ -10,11 +10,11 @@ import (
 	"github.com/pion/dtls/v3"
 )
 
-const maximumDTLSPacketSize = maximumCSTPMTU + 1
+const maximumDTLSPacketSize = cstpMaximumPayloadSize + 1
 
-func (g *Gateway) Set([]byte, dtls.Session) error { return nil }
+func (g *AnyConnectGateway) Set([]byte, dtls.Session) error { return nil }
 
-func (g *Gateway) Get(key []byte) (dtls.Session, error) {
+func (g *AnyConnectGateway) Get(key []byte) (dtls.Session, error) {
 	if g.scenario.InjectedDTLS {
 		if !bytes.Equal(key, fakeDTLSSessionID()) {
 			return dtls.Session{}, errors.New("DTLS ClientHello did not contain the injected session ID")
@@ -40,20 +40,20 @@ func (g *Gateway) Get(key []byte) (dtls.Session, error) {
 	return dtls.Session{}, nil
 }
 
-func (g *Gateway) Del([]byte) error { return nil }
+func (g *AnyConnectGateway) Del([]byte) error { return nil }
 
-func (g *Gateway) DTLSAppIDObserved() bool { return g != nil && g.dtlsAppIDObserved.Load() }
+func (g *AnyConnectGateway) DTLSAppIDObserved() bool { return g != nil && g.dtlsAppIDObserved.Load() }
 
-func (g *Gateway) DTLSInjectedResumptionObserved() bool {
+func (g *AnyConnectGateway) DTLSInjectedResumptionObserved() bool {
 	return g != nil && g.dtlsResumeObserved.Load()
 }
 
 // ModernDTLSPSKOffered reports whether the CSTP client advertised modern PSK negotiation.
-func (g *Gateway) ModernDTLSPSKOffered() bool {
+func (g *AnyConnectGateway) ModernDTLSPSKOffered() bool {
 	return g != nil && g.modernDTLSPSKOffered.Load()
 }
 
-func (g *Gateway) dtlsPSK([]byte) ([]byte, error) {
+func (g *AnyConnectGateway) dtlsPSK([]byte) ([]byte, error) {
 	g.pskLock.RLock()
 	defer g.pskLock.RUnlock()
 	secret := g.psk
@@ -66,7 +66,7 @@ func (g *Gateway) dtlsPSK([]byte) ([]byte, error) {
 	return append([]byte(nil), secret...), nil
 }
 
-func (g *Gateway) claimDTLSSession(psk []byte, masterSecret []byte) bool {
+func (g *AnyConnectGateway) claimDTLSSession(psk []byte, masterSecret []byte) bool {
 	g.pskLock.Lock()
 	defer g.pskLock.Unlock()
 	if g.dtlsOwnerActive {
@@ -78,7 +78,7 @@ func (g *Gateway) claimDTLSSession(psk []byte, masterSecret []byte) bool {
 	return true
 }
 
-func (g *Gateway) releaseDTLSSession() {
+func (g *AnyConnectGateway) releaseDTLSSession() {
 	g.pskLock.Lock()
 	g.dtlsOwnerActive = false
 	clear(g.psk)
@@ -98,12 +98,12 @@ func (g *Gateway) releaseDTLSSession() {
 func fakeDTLSSessionID() []byte { return bytes.Repeat([]byte{0x42}, 32) }
 
 // DropDTLSConnections simulates an unavailable UDP data channel while leaving CSTP alive.
-func (g *Gateway) DropDTLSConnections() int {
+func (g *AnyConnectGateway) DropDTLSConnections() int {
 	return g.dropDTLSConnections(true)
 }
 
 // SetDTLSBlackhole controls whether established DTLS application packets are discarded.
-func (g *Gateway) SetDTLSBlackhole(enabled bool) {
+func (g *AnyConnectGateway) SetDTLSBlackhole(enabled bool) {
 	if g == nil {
 		return
 	}
@@ -113,7 +113,7 @@ func (g *Gateway) SetDTLSBlackhole(enabled bool) {
 	}
 }
 
-func (g *Gateway) dropDTLSConnections(record bool) int {
+func (g *AnyConnectGateway) dropDTLSConnections(record bool) int {
 	if g == nil {
 		return 0
 	}
@@ -133,7 +133,7 @@ func (g *Gateway) dropDTLSConnections(record bool) int {
 	return len(connections)
 }
 
-func (g *Gateway) acceptDTLSLoop() {
+func (g *AnyConnectGateway) acceptDTLSLoop() {
 	defer g.waitGroup.Done()
 	for {
 		connection, err := g.dtlsListener.Accept()
@@ -170,7 +170,7 @@ func (g *Gateway) acceptDTLSLoop() {
 	}
 }
 
-func (g *Gateway) consumeDroppedDTLSConnection(connection net.Conn) bool {
+func (g *AnyConnectGateway) consumeDroppedDTLSConnection(connection net.Conn) bool {
 	g.dtlsConnLock.Lock()
 	_, dropped := g.dtlsDropped[connection]
 	delete(g.dtlsDropped, connection)
@@ -178,7 +178,7 @@ func (g *Gateway) consumeDroppedDTLSConnection(connection net.Conn) bool {
 	return dropped
 }
 
-func (g *Gateway) handleDTLSConnection(connection net.Conn) error {
+func (g *AnyConnectGateway) handleDTLSConnection(connection net.Conn) error {
 	packet := make([]byte, maximumDTLSPacketSize)
 	for {
 		length, err := connection.Read(packet)
