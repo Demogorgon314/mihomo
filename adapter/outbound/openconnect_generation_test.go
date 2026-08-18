@@ -30,9 +30,9 @@ func (generationTestClient) WaitReady(context.Context) (oc.NetworkConfig, error)
 
 func (generationTestClient) WaitDataPlaneReady(context.Context) (uint64, error) { return 0, nil }
 
-func (generationTestClient) ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, error) {
+func (generationTestClient) ReadPacketsWithRevision(ctx context.Context) ([][]byte, uint64, func(), error) {
 	<-ctx.Done()
-	return nil, 0, ctx.Err()
+	return nil, 0, nil, ctx.Err()
 }
 
 func (generationTestClient) WritePacketsAtRevision([][]byte, uint64) error {
@@ -56,15 +56,15 @@ func (*packetSequenceTestClient) WaitDataPlaneReady(context.Context) (uint64, er
 	return 0, nil
 }
 
-func (c *packetSequenceTestClient) ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, error) {
+func (c *packetSequenceTestClient) ReadPacketsWithRevision(ctx context.Context) ([][]byte, uint64, func(), error) {
 	select {
 	case <-ctx.Done():
-		return nil, 0, ctx.Err()
+		return nil, 0, nil, ctx.Err()
 	case packet := <-c.packets:
 		if packet == nil {
-			return nil, 0, c.err
+			return nil, 0, nil, c.err
 		}
-		return packet, c.revision.Load(), nil
+		return [][]byte{packet}, c.revision.Load(), func() {}, nil
 	}
 }
 
@@ -168,9 +168,9 @@ func (*outboundBatchTestClient) WaitDataPlaneReady(context.Context) (uint64, err
 	return 1, nil
 }
 
-func (*outboundBatchTestClient) ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, error) {
+func (*outboundBatchTestClient) ReadPacketsWithRevision(ctx context.Context) ([][]byte, uint64, func(), error) {
 	<-ctx.Done()
-	return nil, 0, ctx.Err()
+	return nil, 0, nil, ctx.Err()
 }
 
 func (*outboundBatchTestClient) WritePacket([]byte) error { return nil }
@@ -624,11 +624,14 @@ func TestAnyConnectNetworkConfigRejectsInvalidMTUAndAddress(t *testing.T) {
 	validIPv6[0] = 0x60
 	oversizedIPv4 := make([]byte, 1401)
 	oversizedIPv4[0] = 0x45
-	if packetMatchesGeneration(nil, v4) || packetMatchesGeneration([]byte{0x45}, v4) || packetMatchesGeneration(validIPv6, v4) || packetMatchesGeneration(oversizedIPv4, v4) || !packetMatchesGeneration(validIPv4, v4) {
+	if validOpenConnectPacket(nil, v4.MTU) || validOpenConnectPacket([]byte{0x45}, v4.MTU) || validOpenConnectPacket(oversizedIPv4, v4.MTU) || !validOpenConnectPacket(validIPv4, v4.MTU) {
 		t.Fatal("packet boundary validation accepted an invalid packet or rejected IPv4")
 	}
+	if packetVersionMatchesGeneration(validIPv6[0]>>4, v4) || !packetVersionMatchesGeneration(validIPv4[0]>>4, v4) {
+		t.Fatal("packet address-family validation accepted IPv6 or rejected IPv4")
+	}
 	v6 := oc.NetworkConfig{Addresses: []netip.Prefix{netip.MustParsePrefix("2001:db8::2/64")}, MTU: 1400}
-	if !packetMatchesGeneration(validIPv6, v6) || packetMatchesGeneration(validIPv4, v6) {
+	if !packetVersionMatchesGeneration(validIPv6[0]>>4, v6) || packetVersionMatchesGeneration(validIPv4[0]>>4, v6) {
 		t.Fatal("packet address-family validation rejected IPv6 or accepted IPv4")
 	}
 }
@@ -657,7 +660,7 @@ func FuzzAnyConnectPacketBoundary(f *testing.F) {
 			mtu = minimumMTU
 		}
 		configuration := oc.NetworkConfig{Addresses: []netip.Prefix{address}, MTU: mtu}
-		got := packetMatchesGeneration(packet, configuration)
+		got := validOpenConnectPacket(packet, mtu) && packetVersionMatchesGeneration(packet[0]>>4, configuration)
 		want := len(packet) >= minimumPacketSize && uint32(len(packet)) <= mtu && packet[0]>>4 == expectedVersion
 		if got != want {
 			t.Fatalf("packet boundary mismatch: got %v, want %v (length=%d mtu=%d IPv6=%v)", got, want, len(packet), mtu, ipv6)
