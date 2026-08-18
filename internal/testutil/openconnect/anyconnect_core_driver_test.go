@@ -74,7 +74,7 @@ func TestSingOpenConnectCSTPDriver(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, capability := range []Capability{CapabilityCookieCSTP, CapabilityPacketIPv4} {
-		if err := phase0CapabilityMatrix.Record(Evidence{
+		if err := capabilityMatrix.Record(Evidence{
 			Capability: capability,
 			Scenario:   scenario.Name,
 			Driver:     DriverCore,
@@ -91,11 +91,11 @@ func TestSingOpenConnectCSTPDriver(t *testing.T) {
 func TestSingOpenConnectAuthenticationDriver(t *testing.T) {
 	scenario := BasicAnyConnectScenario()
 	scenario.Authentication = AnyConnectAuthenticationScenario{
-		Enabled:           true,
-		Username:          "core-user",
-		Password:          "core-password",
-		Challenge:         "Core second factor",
-		ChallengeResponse: "123456",
+		Enabled:            true,
+		Username:           "core-user",
+		Password:           "core-password",
+		Challenge:          "Core second factor",
+		ChallengeResponses: []string{"123456"},
 	}
 	serverAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := NewIPv4ICMPEchoPeer(serverAddress)
@@ -104,7 +104,7 @@ func TestSingOpenConnectAuthenticationDriver(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	gateway, err := StartAnyConnectGateway(ctx, scenario, peer, NewRecorder(scenario.Cookie, scenario.Authentication.Password, scenario.Authentication.ChallengeResponse))
+	gateway, err := StartAnyConnectGateway(ctx, scenario, peer, NewRecorder(scenario.Cookie, scenario.Authentication.Password, scenario.Authentication.ChallengeResponses[0]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestSingOpenConnectAuthenticationDriver(t *testing.T) {
 		FormEntries: []singopenconnect.FormEntry{{
 			FormID: "challenge",
 			Name:   "answer",
-			Value:  scenario.Authentication.ChallengeResponse,
+			Value:  scenario.Authentication.ChallengeResponses[0],
 		}},
 		TLSConfig: singopenconnect.ClientTLSOptions{Config: &tls.Config{
 			MinVersion: tls.VersionTLS12,
@@ -157,7 +157,7 @@ func TestSingOpenConnectAuthenticationDriver(t *testing.T) {
 	if err := client.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := phase0CapabilityMatrix.Record(Evidence{
+	if err := capabilityMatrix.Record(Evidence{
 		Capability: CapabilityAuth,
 		Scenario:   "username-password-challenge",
 		Driver:     DriverCore,
@@ -251,7 +251,7 @@ func TestSingOpenConnectDTLSFailureFallsBackToCSTP(t *testing.T) {
 	if err := client.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := phase0CapabilityMatrix.Record(Evidence{
+	if err := capabilityMatrix.Record(Evidence{
 		Capability: CapabilityFallback,
 		Scenario:   "dtls-dial-failure",
 		Driver:     DriverCore,
@@ -321,7 +321,7 @@ func TestSingOpenConnectModernDTLSDriver(t *testing.T) {
 		t.Fatalf("fake gateway did not record DTLS data: %#v", records)
 	}
 	for _, capability := range []Capability{CapabilityModernDTLS, CapabilityPacketIPv4} {
-		if err := phase0CapabilityMatrix.Record(Evidence{
+		if err := capabilityMatrix.Record(Evidence{
 			Capability: capability,
 			Scenario:   "modern-dtls",
 			Driver:     DriverCore,
@@ -405,7 +405,7 @@ func TestSingOpenConnectStatelessCompressionDriver(t *testing.T) {
 				case <-time.After(10 * time.Millisecond):
 				}
 			}
-			if err := phase0CapabilityMatrix.Record(Evidence{
+			if err := capabilityMatrix.Record(Evidence{
 				Capability: CapabilityCompression,
 				Scenario:   scenario.Name + "-" + algorithm,
 				Driver:     DriverCore,

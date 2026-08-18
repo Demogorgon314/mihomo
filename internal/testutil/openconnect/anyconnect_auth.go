@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -91,15 +92,7 @@ func (g *AnyConnectGateway) handleAuthReply(connection net.Conn, document fakeAu
 }
 
 func (a AnyConnectAuthenticationScenario) acceptsChallengeResponse(value string) bool {
-	if value == a.ChallengeResponse && value != "" {
-		return true
-	}
-	for _, candidate := range a.ChallengeResponses {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
+	return value != "" && slices.Contains(a.ChallengeResponses, value)
 }
 
 func (g *AnyConnectGateway) completeAuthentication(connection net.Conn) error {
@@ -164,7 +157,7 @@ func xmlEscape(value string) string {
 }
 
 const fakePrimaryAuthForm = `<?xml version="1.0" encoding="UTF-8"?>
-<config-auth><auth id="main"><banner>Phase 0 fake gateway</banner><form method="POST" action="/auth"><input type="text" name="username" label="Username"/><input type="password" name="password" label="Password"/></form></auth></config-auth>`
+<config-auth><auth id="main"><banner>AnyConnect fake gateway</banner><form method="POST" action="/auth"><input type="text" name="username" label="Username"/><input type="password" name="password" label="Password"/></form></auth></config-auth>`
 
 func fakePrimaryAuthenticationForm(authGroup string, selectedGroup string) string {
 	if authGroup == "" {

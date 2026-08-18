@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-var phase0CapabilityMatrix = NewCapabilityMatrix()
+var capabilityMatrix = NewCapabilityMatrix()
 
 func TestMain(main *testing.M) {
 	code := main.Run()
 	if path := os.Getenv("MIHOMO_ANYCONNECT_MATRIX"); path != "" {
-		if err := phase0CapabilityMatrix.WriteJSON(path); err != nil {
+		if err := capabilityMatrix.WriteJSON(path); err != nil {
 			_, _ = os.Stderr.WriteString("write AnyConnect capability matrix: " + err.Error() + "\n")
 			if code == 0 {
 				code = 1
@@ -47,7 +47,7 @@ func TestCapabilityMatrixRecordsDeterministicEvidence(t *testing.T) {
 	if err := matrix.Record(updated); err != nil {
 		t.Fatal(err)
 	}
-	entries := matrix.Snapshot()
+	entries := matrix.snapshot()
 	if len(entries) != 3 {
 		t.Fatalf("unexpected evidence count: %d", len(entries))
 	}
@@ -58,7 +58,7 @@ func TestCapabilityMatrixRecordsDeterministicEvidence(t *testing.T) {
 		t.Fatalf("duplicate evidence was not replaced: %#v", entries[0])
 	}
 	entries[0].Gateway = "changed"
-	if matrix.Snapshot()[0].Gateway == "changed" {
+	if matrix.snapshot()[0].Gateway == "changed" {
 		t.Fatal("snapshot mutation changed matrix")
 	}
 }
@@ -79,7 +79,7 @@ func TestCapabilityMatrixRejectsInvalidEvidence(t *testing.T) {
 			t.Fatalf("expected invalid evidence error: %#v", evidence)
 		}
 	}
-	if snapshot := nilMatrix.Snapshot(); snapshot != nil {
+	if snapshot := nilMatrix.snapshot(); snapshot != nil {
 		t.Fatalf("nil matrix returned evidence: %#v", snapshot)
 	}
 }

@@ -63,7 +63,7 @@ func TestFakeGatewayCSTPProbe(t *testing.T) {
 		}
 	}
 	for _, capability := range []Capability{CapabilityCookieCSTP, CapabilityPacketIPv4} {
-		if err := phase0CapabilityMatrix.Record(Evidence{
+		if err := capabilityMatrix.Record(Evidence{
 			Capability: capability,
 			Scenario:   scenario.Name,
 			Driver:     DriverProbe,
@@ -94,7 +94,7 @@ func TestFakeGatewayModernDTLSProbe(t *testing.T) {
 	if len(result.Packet) < 28 || result.Packet[20] != 0 || string(result.Packet[28:]) != "probe" {
 		t.Fatalf("unexpected DTLS probe reply: %x", result.Packet)
 	}
-	if err := phase0CapabilityMatrix.Record(Evidence{
+	if err := capabilityMatrix.Record(Evidence{
 		Capability: CapabilityModernDTLS,
 		Scenario:   "modern-dtls",
 		Driver:     DriverProbe,
@@ -173,7 +173,7 @@ func TestFakeGatewayMalformedFrameIsDetected(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "magic") {
 		t.Fatalf("expected malformed magic error, got %v", err)
 	}
-	if err := phase0CapabilityMatrix.Record(Evidence{
+	if err := capabilityMatrix.Record(Evidence{
 		Capability: CapabilityFraming,
 		Scenario:   "malformed-data-header",
 		Driver:     DriverProbe,
@@ -203,7 +203,7 @@ func TestFakeGatewayProbeDetectsCorruptPacket(t *testing.T) {
 	if err := gateway.Close(); err == nil || !strings.Contains(err.Error(), "invalid IPv4 header checksum") {
 		t.Fatalf("expected gateway checksum rejection, got %v", err)
 	}
-	if err := phase0CapabilityMatrix.Record(Evidence{
+	if err := capabilityMatrix.Record(Evidence{
 		Capability: CapabilityPacketIPv4,
 		Scenario:   "corrupt-ipv4-checksum",
 		Driver:     DriverProbe,
@@ -229,7 +229,7 @@ func TestFakeGatewayTLSIsVerified(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "certificate") {
 		t.Fatalf("expected certificate verification error, got %v", err)
 	}
-	if err := phase0CapabilityMatrix.Record(Evidence{
+	if err := capabilityMatrix.Record(Evidence{
 		Capability: CapabilityTLSVerify,
 		Scenario:   "untrusted-ca",
 		Driver:     DriverProbe,

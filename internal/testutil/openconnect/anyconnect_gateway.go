@@ -90,7 +90,7 @@ func StartAnyConnectGateway(parent context.Context, scenario AnyConnectScenario,
 	if parent == nil {
 		return nil, errors.New("gateway context is required")
 	}
-	if err := scenario.Validate(); err != nil {
+	if err := scenario.validate(); err != nil {
 		return nil, fmt.Errorf("validate gateway scenario: %w", err)
 	}
 	if peer == nil {
@@ -613,7 +613,7 @@ func (g *AnyConnectGateway) addError(err error) {
 
 func (g *AnyConnectGateway) record(kind string, message string) {
 	if g.recorder != nil {
-		g.recorder.Add(kind, message)
+		g.recorder.add(kind, message)
 	}
 }
 

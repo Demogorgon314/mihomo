@@ -11,12 +11,12 @@ import (
 func TestFakeAuthenticationProbeMultiroundExpiryAndReauthentication(t *testing.T) {
 	scenario := BasicAnyConnectScenario()
 	scenario.Authentication = AnyConnectAuthenticationScenario{
-		Enabled:           true,
-		Username:          "phase0-user",
-		Password:          "phase0-password",
-		Challenge:         "Enter second factor",
-		ChallengeResponse: "654321",
-		CookieUses:        1,
+		Enabled:            true,
+		Username:           "phase0-user",
+		Password:           "phase0-password",
+		Challenge:          "Enter second factor",
+		ChallengeResponses: []string{"654321"},
+		CookieUses:         1,
 	}
 	serverAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := NewIPv4ICMPEchoPeer(serverAddress)
@@ -25,7 +25,7 @@ func TestFakeAuthenticationProbeMultiroundExpiryAndReauthentication(t *testing.T
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	recorder := NewRecorder(scenario.Cookie, scenario.Authentication.Password, scenario.Authentication.ChallengeResponse)
+	recorder := NewRecorder(scenario.Cookie, scenario.Authentication.Password, scenario.Authentication.ChallengeResponses[0])
 	gateway, err := StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestFakeAuthenticationProbeMultiroundExpiryAndReauthentication(t *testing.T
 		RootCAs:           gateway.RootCAs(),
 		Username:          scenario.Authentication.Username,
 		Password:          scenario.Authentication.Password,
-		ChallengeResponse: scenario.Authentication.ChallengeResponse,
+		ChallengeResponse: scenario.Authentication.ChallengeResponses[0],
 	}
 	firstCookie, err := RunAnyConnectAuthProbe(ctx, probeOptions)
 	if err != nil {
@@ -68,7 +68,7 @@ func TestFakeAuthenticationProbeMultiroundExpiryAndReauthentication(t *testing.T
 	if _, err := RunAnyConnectCSTPProbe(ctx, cstpOptions); err != nil {
 		t.Fatal(err)
 	}
-	if err := phase0CapabilityMatrix.Record(Evidence{
+	if err := capabilityMatrix.Record(Evidence{
 		Capability: CapabilityAuth,
 		Scenario:   "multiround-expiry-reauthentication",
 		Driver:     DriverProbe,
@@ -80,7 +80,7 @@ func TestFakeAuthenticationProbeMultiroundExpiryAndReauthentication(t *testing.T
 		t.Fatal(err)
 	}
 	for _, record := range recorder.Records() {
-		for _, secret := range []string{scenario.Authentication.Password, scenario.Authentication.ChallengeResponse, firstCookie, secondCookie} {
+		for _, secret := range []string{scenario.Authentication.Password, scenario.Authentication.ChallengeResponses[0], firstCookie, secondCookie} {
 			if strings.Contains(record.Message, secret) {
 				t.Fatalf("authentication secret leaked into record %#v", record)
 			}
@@ -91,11 +91,11 @@ func TestFakeAuthenticationProbeMultiroundExpiryAndReauthentication(t *testing.T
 func TestFakeAuthenticationProbeRejectsCredentialsAndChallenge(t *testing.T) {
 	scenario := BasicAnyConnectScenario()
 	scenario.Authentication = AnyConnectAuthenticationScenario{
-		Enabled:           true,
-		Username:          "phase0-user",
-		Password:          "phase0-password",
-		Challenge:         "Second factor",
-		ChallengeResponse: "654321",
+		Enabled:            true,
+		Username:           "phase0-user",
+		Password:           "phase0-password",
+		Challenge:          "Second factor",
+		ChallengeResponses: []string{"654321"},
 	}
 	gateway, _, ctx := startProbeTestGateway(t, scenario)
 	base := AnyConnectAuthProbeOptions{
@@ -104,7 +104,7 @@ func TestFakeAuthenticationProbeRejectsCredentialsAndChallenge(t *testing.T) {
 		RootCAs:           gateway.RootCAs(),
 		Username:          scenario.Authentication.Username,
 		Password:          "wrong-password",
-		ChallengeResponse: scenario.Authentication.ChallengeResponse,
+		ChallengeResponse: scenario.Authentication.ChallengeResponses[0],
 	}
 	if _, err := RunAnyConnectAuthProbe(ctx, base); err == nil || !strings.Contains(err.Error(), "HTTP 401") {
 		t.Fatalf("expected credential rejection, got %v", err)
@@ -130,7 +130,7 @@ func TestAuthenticationScenarioValidation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			scenario := BasicAnyConnectScenario()
 			scenario.Authentication = test.value
-			if err := scenario.Validate(); err == nil || !strings.Contains(err.Error(), test.message) {
+			if err := scenario.validate(); err == nil || !strings.Contains(err.Error(), test.message) {
 				t.Fatalf("expected error containing %q, got %v", test.message, err)
 			}
 		})
