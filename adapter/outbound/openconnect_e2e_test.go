@@ -1613,7 +1613,7 @@ func TestOpenConnectHandshakeTimeoutRetriesAfterBackoff(t *testing.T) {
 		t.Fatalf("startup timeout did not arm bounded retry: delay=%s at=%v", outbound.retryDelay, outbound.retryAt)
 	}
 	outbound.retryAt = time.Now()
-	outbound.option.HandshakeTimeout = 0
+	outbound.handshakeTimeout = 0
 	outbound.config.Server = "https://" + healthyGateway.Address()
 	outbound.access.Unlock()
 	session, retryErr := outbound.run(ctx)

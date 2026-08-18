@@ -20,10 +20,9 @@ import (
 	wireguard "github.com/metacubex/sing-wireguard"
 )
 
-// Keep outbound DTLS writes one packet at a time. Some AnyConnect gateways
-// continue answering DPD while silently dropping DATA after batched UDP sends.
-// Keep sendmmsg batches deliberately small. Larger bursts have caused
-// interoperability failures with real AnyConnect gateways.
+// Keep outbound DTLS batches deliberately small. Some AnyConnect gateways
+// continue answering DPD while silently dropping DATA after larger sendmmsg
+// bursts.
 const openConnectOutboundPacketBatchSize = 2
 
 type openConnectGeneration struct {
@@ -39,10 +38,6 @@ type openConnectGeneration struct {
 
 type openConnectGRODevice interface {
 	WriteGRO(bufs [][]byte, offset int) (count int, err error)
-}
-
-func (g *openConnectGeneration) writePacket(packet []byte, expectedRevision uint64) (bool, error) {
-	return g.writePackets([][]byte{packet}, expectedRevision)
 }
 
 func (g *openConnectGeneration) writePackets(packets [][]byte, expectedRevision uint64) (bool, error) {
@@ -77,17 +72,16 @@ func (g *openConnectGeneration) close() error {
 }
 
 type openConnectSession struct {
-	client acClient
+	client openConnectClient
 	ctx    context.Context
 	cancel context.CancelFunc
 	name   string
 
 	resolverFactory func(configuration oc.NetworkConfig) (resolver.Resolver, error)
 
-	access        sync.RWMutex
-	generation    *openConnectGeneration
-	configuration oc.NetworkConfig
-	stopped       bool
+	access     sync.RWMutex
+	generation *openConnectGeneration
+	stopped    bool
 
 	initialOnce sync.Once
 	initialDone chan struct{}
@@ -100,22 +94,21 @@ type openConnectSession struct {
 	stopErr  error
 }
 
-type acClient interface {
+type openConnectClient interface {
 	WaitReady(ctx context.Context) (oc.NetworkConfig, error)
 	WaitDataPlaneReady(ctx context.Context) (uint64, error)
 	ReadPacketWithRevision(ctx context.Context) ([]byte, uint64, error)
 	WritePacket(packet []byte) error
-	WritePacketAtRevision(packet []byte, revision uint64) error
 	WritePacketsAtRevision(packets [][]byte, revision uint64) error
 	ActiveTransport() string
 	Close() error
 }
 
-type acPacketBatchReader interface {
+type openConnectPacketBatchReader interface {
 	ReadPacketsWithRevision(ctx context.Context) ([][]byte, uint64, func(), error)
 }
 
-func newAnyConnectSession(
+func newOpenConnectSession(
 	runCtx context.Context,
 	handshakeCtx context.Context,
 	config oc.Config,
@@ -170,7 +163,7 @@ func newAnyConnectSession(
 }
 
 func (s *openConnectSession) applyNetworkConfig(event oc.NetworkConfigEvent) error {
-	configuration, err := validateAnyConnectNetworkConfig(event.Config)
+	configuration, err := validateOpenConnectNetworkConfig(event.Config)
 	if err != nil {
 		s.signalInitial(err)
 		return err
@@ -192,14 +185,13 @@ func (s *openConnectSession) applyNetworkConfig(event oc.NetworkConfigEvent) err
 	if stopped {
 		return net.ErrClosed
 	}
-	if current != nil && sameAnyConnectNetworkIdentity(currentConfiguration, configuration) {
+	if current != nil && sameOpenConnectNetworkIdentity(currentConfiguration, configuration) {
 		current.dataPlaneAccess.Lock()
 		s.access.Lock()
 		if s.generation == current && !s.stopped && !current.closed.Load() {
 			current.revision = event.Revision
 			current.configuration = configuration
 			current.resolver = remoteResolver
-			s.configuration = configuration
 		}
 		s.access.Unlock()
 		current.dataPlaneAccess.Unlock()
@@ -239,7 +231,6 @@ func (s *openConnectSession) applyNetworkConfig(event oc.NetworkConfigEvent) err
 	}
 	previous := s.generation
 	s.generation = generation
-	s.configuration = configuration
 	s.wait.Add(2)
 	s.access.Unlock()
 	go s.readStackPackets(generation)
@@ -252,7 +243,7 @@ func (s *openConnectSession) applyNetworkConfig(event oc.NetworkConfigEvent) err
 	return nil
 }
 
-func validateAnyConnectNetworkConfig(configuration oc.NetworkConfig) (oc.NetworkConfig, error) {
+func validateOpenConnectNetworkConfig(configuration oc.NetworkConfig) (oc.NetworkConfig, error) {
 	if len(configuration.Addresses) == 0 {
 		return oc.NetworkConfig{}, errors.New("OpenConnect server did not assign a tunnel address")
 	}
@@ -274,7 +265,7 @@ func validateAnyConnectNetworkConfig(configuration oc.NetworkConfig) (oc.Network
 	return configuration, nil
 }
 
-func sameAnyConnectNetworkIdentity(left oc.NetworkConfig, right oc.NetworkConfig) bool {
+func sameOpenConnectNetworkIdentity(left oc.NetworkConfig, right oc.NetworkConfig) bool {
 	if left.MTU != right.MTU || len(left.Addresses) != len(right.Addresses) {
 		return false
 	}
@@ -310,7 +301,10 @@ func (s *openConnectSession) currentDevice() (wireguard.Device, resolver.Resolve
 func (s *openConnectSession) configurationSnapshot() oc.NetworkConfig {
 	s.access.RLock()
 	defer s.access.RUnlock()
-	return s.configuration
+	if s.generation == nil {
+		return oc.NetworkConfig{}
+	}
+	return s.generation.configuration
 }
 
 func (s *openConnectSession) readStackPackets(generation *openConnectGeneration) {
@@ -462,7 +456,7 @@ func (s *openConnectSession) runTunnelToStack() {
 		s.access.RUnlock()
 		currentPackets := packets[:0]
 		for _, packet := range packets {
-			if !validAnyConnectPacket(packet, configuration.MTU) {
+			if !validOpenConnectPacket(packet, configuration.MTU) {
 				release()
 				s.stop(errors.New("OpenConnect server sent an invalid network packet"))
 				return
@@ -497,7 +491,7 @@ func (s *openConnectSession) runTunnelToStack() {
 }
 
 func (s *openConnectSession) readTunnelPackets() ([][]byte, uint64, func(), error) {
-	if batchReader, loaded := s.client.(acPacketBatchReader); loaded {
+	if batchReader, loaded := s.client.(openConnectPacketBatchReader); loaded {
 		return batchReader.ReadPacketsWithRevision(s.ctx)
 	}
 	packet, revision, err := s.client.ReadPacketWithRevision(s.ctx)
@@ -508,7 +502,7 @@ func (s *openConnectSession) readTunnelPackets() ([][]byte, uint64, func(), erro
 }
 
 func packetMatchesGeneration(packet []byte, configuration oc.NetworkConfig) bool {
-	if !validAnyConnectPacket(packet, configuration.MTU) {
+	if !validOpenConnectPacket(packet, configuration.MTU) {
 		return false
 	}
 	version := packet[0] >> 4
@@ -520,7 +514,7 @@ func packetMatchesGeneration(packet []byte, configuration oc.NetworkConfig) bool
 	return false
 }
 
-func validAnyConnectPacket(packet []byte, mtu uint32) bool {
+func validOpenConnectPacket(packet []byte, mtu uint32) bool {
 	if len(packet) == 0 || uint32(len(packet)) > mtu {
 		return false
 	}
