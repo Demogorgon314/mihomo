@@ -330,7 +330,7 @@ func TestAnyConnectModernDTLSOutbound(t *testing.T) {
 			}
 		}()
 		<-writerStarted
-		beforeFallback := countRecords(recorder.Records(), "cstp-data")
+		beforeFallback := recorder.Count("cstp-data")
 		if gateway.DropDTLSConnections() != 1 {
 			t.Fatal("fake gateway did not have one active DTLS connection")
 		}
@@ -340,7 +340,7 @@ func TestAnyConnectModernDTLSOutbound(t *testing.T) {
 			t.Fatal(ctx.Err())
 		}
 		<-writerDone
-		if afterFallback := countRecords(recorder.Records(), "cstp-data"); afterFallback != beforeFallback {
+		if afterFallback := recorder.Count("cstp-data"); afterFallback != beforeFallback {
 			t.Fatalf("require mode transmitted data over CSTP: before=%d after=%d", beforeFallback, afterFallback)
 		}
 		if _, err := outbound.run(ctx); !errors.Is(err, oc.ErrDTLSRequired) {
@@ -395,8 +395,8 @@ func TestAnyConnectLegacyDTLSRekey(t *testing.T) {
 	defer packetConn.Close()
 	destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
 	exchangeAnyConnectUDP(t, ctx, packetConn, destination, "legacy DTLS before rekey")
-	handshakes := countRecords(recorder.Records(), "legacy-dtls-handshake")
-	for countRecords(recorder.Records(), "cstp-connect") < 2 || countRecords(recorder.Records(), "legacy-dtls-handshake") <= handshakes {
+	handshakes := recorder.Count("legacy-dtls-handshake")
+	for recorder.Count("cstp-connect") < 2 || recorder.Count("legacy-dtls-handshake") <= handshakes {
 		select {
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
@@ -568,7 +568,7 @@ func TestAnyConnectRekeyAndEOFKeepGenerationAndUDPFlow(t *testing.T) {
 		exchangeAnyConnectUDP(t, ctx, connection, destination, payload)
 	}
 	exchange("before reconnect")
-	for countRecords(recorder.Records(), "cstp-connect") < 2 {
+	for recorder.Count("cstp-connect") < 2 {
 		select {
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
@@ -578,7 +578,7 @@ func TestAnyConnectRekeyAndEOFKeepGenerationAndUDPFlow(t *testing.T) {
 	if closed := gateway.DropCSTPConnections(); closed != 1 {
 		t.Fatalf("expected one active CSTP connection, closed %d", closed)
 	}
-	for countRecords(recorder.Records(), "cstp-connect") < 3 {
+	for recorder.Count("cstp-connect") < 3 {
 		select {
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
@@ -643,14 +643,14 @@ func TestAnyConnectDPDBlackholeKeepsGenerationAndUDPFlow(t *testing.T) {
 	defer connection.Close()
 	destination := &net.UDPAddr{IP: peerAddress.AsSlice(), Port: testAnyConnectUDPPort}
 	exchangeAnyConnectUDP(t, ctx, connection, destination, "before DPD blackhole")
-	for countRecords(recorder.Records(), "cstp-connect") < 2 {
+	for recorder.Count("cstp-connect") < 2 {
 		select {
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	if blackholed := countRecords(recorder.Records(), "cstp-dpd-blackhole"); blackholed < 2 {
+	if blackholed := recorder.Count("cstp-dpd-blackhole"); blackholed < 2 {
 		t.Fatalf("sustained DPD blackhole did not consume repeated probes: %d", blackholed)
 	}
 	if _, err := session.client.WaitReady(ctx); err != nil {
@@ -664,7 +664,7 @@ func TestAnyConnectDPDBlackholeKeepsGenerationAndUDPFlow(t *testing.T) {
 		t.Fatal("DPD recovery replaced an unchanged stack generation")
 	}
 	exchangeAnyConnectUDP(t, ctx, connection, destination, "after DPD blackhole recovery")
-	for countRecords(recorder.Records(), "cstp-dpd") == 0 {
+	for recorder.Count("cstp-dpd") == 0 {
 		select {
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
@@ -719,7 +719,7 @@ func TestAnyConnectReconnectReplacesChangedMTUGeneration(t *testing.T) {
 	if closed := gateway.DropCSTPConnections(); closed != 1 {
 		t.Fatalf("expected one active CSTP connection, closed %d", closed)
 	}
-	for countRecords(recorder.Records(), "cstp-connect") < 2 {
+	for recorder.Count("cstp-connect") < 2 {
 		select {
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
@@ -801,7 +801,7 @@ func TestAnyConnectReconnectsAfterUnderlaySwitch(t *testing.T) {
 	if closed := primary.DropCSTPConnections(); closed != 1 {
 		t.Fatalf("expected one primary CSTP connection, closed %d", closed)
 	}
-	for countRecords(secondaryRecorder.Records(), "cstp-connect") < 1 {
+	for secondaryRecorder.Count("cstp-connect") < 1 {
 		select {
 		case <-ctx.Done():
 			t.Fatalf("tunnel did not reconnect through switched underlay: %v", ctx.Err())
@@ -822,7 +822,7 @@ func TestAnyConnectReconnectsAfterUnderlaySwitch(t *testing.T) {
 	if attempts := dialer.count(); attempts != 2 {
 		t.Fatalf("underlay switch caused unexpected dial attempts: %d", attempts)
 	}
-	if countRecords(primaryRecorder.Records(), "cstp-connect") != 1 {
+	if primaryRecorder.Count("cstp-connect") != 1 {
 		t.Fatalf("primary gateway was dialed after underlay switch: %v", primaryRecorder.Records())
 	}
 	writeAnyConnectEvidence(t, "underlay-switch", scenario.Name+"-underlay-switch", []testopenconnect.Capability{
@@ -1030,7 +1030,7 @@ func TestAnyConnectReleaseStress(t *testing.T) {
 	})
 
 	t.Run("startup close cycles", func(t *testing.T) {
-		baseline := countRecords(recorder.Records(), "cstp-connect")
+		baseline := recorder.Count("cstp-connect")
 		baselineGoroutines := runtime.NumGoroutine()
 		baselineFDs := countAnyConnectFileDescriptors()
 		for range 20 {
@@ -1042,7 +1042,7 @@ func TestAnyConnectReleaseStress(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if connections := countRecords(recorder.Records(), "cstp-connect") - baseline; connections != 20 {
+		if connections := recorder.Count("cstp-connect") - baseline; connections != 20 {
 			t.Fatalf("startup/close cycles created %d CSTP sessions", connections)
 		}
 		waitForAnyConnectResourceCeiling(t, "startup/close stress", baselineGoroutines, baselineFDs, 4, 2)
@@ -1143,11 +1143,11 @@ func runAnyConnectSoak(t *testing.T, dtlsTransport string) {
 		now := time.Now()
 		if !now.Before(nextReconnect) {
 			if dtlsTransport == "legacy" {
-				legacyHandshakes := countRecords(recorder.Records(), "legacy-dtls-handshake")
+				legacyHandshakes := recorder.Count("legacy-dtls-handshake")
 				gateway.SetDTLSBlackhole(true)
 				waitAnyConnectTransport(t, ctx, session, "cstp")
 				gateway.SetDTLSBlackhole(false)
-				for countRecords(recorder.Records(), "legacy-dtls-handshake") <= legacyHandshakes {
+				for recorder.Count("legacy-dtls-handshake") <= legacyHandshakes {
 					select {
 					case <-ctx.Done():
 						t.Fatal(ctx.Err())
@@ -1454,12 +1454,12 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 	defer cancel()
 	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.Authentication = testopenconnect.AnyConnectAuthenticationScenario{
-		Enabled:           true,
-		Username:          "phase2-user",
-		Password:          "phase2-password",
-		Challenge:         "Phase 2 challenge",
-		ChallengeResponse: "phase2-answer",
-		CookieUses:        1,
+		Enabled:            true,
+		Username:           "phase2-user",
+		Password:           "phase2-password",
+		Challenge:          "Phase 2 challenge",
+		ChallengeResponses: []string{"phase2-answer"},
+		CookieUses:         1,
 	}
 	peerAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
@@ -1467,7 +1467,7 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = peer.Close() }()
-	recorder := testopenconnect.NewRecorder(scenario.Cookie, scenario.Authentication.Password, scenario.Authentication.ChallengeResponse)
+	recorder := testopenconnect.NewRecorder(scenario.Cookie, scenario.Authentication.Password, scenario.Authentication.ChallengeResponses[0])
 	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
@@ -1478,7 +1478,7 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 			return oc.AuthResponse{}, errors.New("unexpected AnyConnect challenge")
 		}
 		field := challenge.Form.Fields[0]
-		return oc.AuthResponse{FormValues: map[string]string{field.SubmissionKey: scenario.Authentication.ChallengeResponse}}, nil
+		return oc.AuthResponse{FormValues: map[string]string{field.SubmissionKey: scenario.Authentication.ChallengeResponses[0]}}, nil
 	})
 	authenticated := newFakeAnyConnectOutboundWithOption(t, gateway, scenario, new(openConnectRecordingDialer), 0, func(option *OpenConnectOption) {
 		option.Cookie = ""
@@ -1494,7 +1494,7 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 	if closed := gateway.DropCSTPConnections(); closed != 1 {
 		t.Fatalf("expected one authenticated CSTP connection, closed %d", closed)
 	}
-	for countRecords(recorder.Records(), "auth-complete") < 2 || countRecords(recorder.Records(), "cstp-connect") < 2 {
+	for recorder.Count("auth-complete") < 2 || recorder.Count("cstp-connect") < 2 {
 		select {
 		case <-ctx.Done():
 			t.Fatalf("cookie expiry did not trigger reauthentication: %v", recorder.Records())
@@ -1518,7 +1518,7 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 
 	rejectedScenario := scenario
 	rejectedScenario.Name = "missing-auth-provider"
-	rejectedRecorder := testopenconnect.NewRecorder(rejectedScenario.Cookie, rejectedScenario.Authentication.Password, rejectedScenario.Authentication.ChallengeResponse)
+	rejectedRecorder := testopenconnect.NewRecorder(rejectedScenario.Cookie, rejectedScenario.Authentication.Password, rejectedScenario.Authentication.ChallengeResponses[0])
 	rejectedGateway, err := testopenconnect.StartAnyConnectGateway(ctx, rejectedScenario, peer, rejectedRecorder)
 	if err != nil {
 		t.Fatal(err)
@@ -1550,7 +1550,7 @@ func TestAnyConnectAuthenticatedStartupAndTerminalFailureLatch(t *testing.T) {
 	if !errors.Is(firstErr, oc.ErrAuthRejected) || !oc.IsTerminal(firstErr) {
 		t.Fatalf("expected terminal auth-rejected error, got %v", firstErr)
 	}
-	if rejectedCount := countRecords(rejectedRecorder.Records(), "auth-reject"); rejectedCount != 1 {
+	if rejectedCount := rejectedRecorder.Count("auth-reject"); rejectedCount != 1 {
 		t.Fatalf("credential rejection was retried: %d attempts", rejectedCount)
 	}
 	recordCount := len(rejectedRecorder.Records())
@@ -1677,16 +1677,6 @@ func newFakeAnyConnectOutboundWithOption(t testing.TB, gateway *testopenconnect.
 		t.Fatal(err)
 	}
 	return outbound
-}
-
-func countRecords(records []testopenconnect.Record, kind string) int {
-	count := 0
-	for _, record := range records {
-		if record.Kind == kind {
-			count++
-		}
-	}
-	return count
 }
 
 func waitAnyConnectRecordCount(t *testing.T, ctx context.Context, recorder *testopenconnect.Recorder, kind string, minimum uint64) uint64 {

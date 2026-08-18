@@ -18,7 +18,7 @@ import (
 
 const probeDTLSExporterLabel = "EXPORTER-openconnect-psk"
 
-// AnyConnectProbeOptions configures the independent Phase 0 CSTP probe.
+// AnyConnectProbeOptions configures the independent CSTP probe.
 type AnyConnectProbeOptions struct {
 	Address    string
 	ServerName string
@@ -167,7 +167,7 @@ func openProbeCSTP(ctx context.Context, options AnyConnectProbeOptions) (net.Con
 	}
 	request := "CONNECT /CSCOSSLC/tunnel HTTP/1.1\r\n" +
 		"Host: " + options.ServerName + "\r\n" +
-		"User-Agent: mihomo-anyconnect-phase0-probe\r\n" +
+		"User-Agent: mihomo-anyconnect-probe\r\n" +
 		"Cookie: webvpn=" + options.Cookie + "\r\n" +
 		"X-CSTP-Version: 1\r\n" +
 		"X-CSTP-MTU: 1400\r\n" +

@@ -45,7 +45,6 @@ type AnyConnectAuthenticationScenario struct {
 	Password                   string
 	AuthGroup                  string
 	Challenge                  string
-	ChallengeResponse          string
 	ChallengeResponses         []string
 	Browser                    bool
 	HostScan                   bool
@@ -82,8 +81,7 @@ func BasicAnyConnectScenario() AnyConnectScenario {
 	}
 }
 
-// Validate rejects scenarios that cannot produce an unambiguous tunnel.
-func (s AnyConnectScenario) Validate() error {
+func (s AnyConnectScenario) validate() error {
 	var validationErrors []error
 	if strings.TrimSpace(s.Name) == "" {
 		validationErrors = append(validationErrors, errors.New("scenario name is required"))
@@ -186,8 +184,7 @@ func (s AnyConnectScenario) Validate() error {
 		if s.Authentication.Username == "" || s.Authentication.Password == "" {
 			validationErrors = append(validationErrors, errors.New("authentication username and password are required"))
 		}
-		hasChallengeResponse := s.Authentication.ChallengeResponse != "" || len(s.Authentication.ChallengeResponses) > 0
-		if (s.Authentication.Challenge != "") != hasChallengeResponse {
+		if (s.Authentication.Challenge != "") != (len(s.Authentication.ChallengeResponses) > 0) {
 			validationErrors = append(validationErrors, errors.New("authentication challenge and response must be configured together"))
 		}
 		if s.Authentication.Browser && (s.Authentication.Challenge != "" || s.Authentication.HostScan) {

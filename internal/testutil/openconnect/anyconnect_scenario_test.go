@@ -8,7 +8,7 @@ import (
 
 func TestBasicCSTPScenario(t *testing.T) {
 	scenario := BasicAnyConnectScenario()
-	if err := scenario.Validate(); err != nil {
+	if err := scenario.validate(); err != nil {
 		t.Fatal(err)
 	}
 	if scenario.Configuration.MTU != defaultTunnelMTU {
@@ -40,7 +40,7 @@ func TestScenarioValidate(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			scenario := BasicAnyConnectScenario()
 			test.mutate(&scenario)
-			err := scenario.Validate()
+			err := scenario.validate()
 			if err == nil || !strings.Contains(err.Error(), test.message) {
 				t.Fatalf("expected error containing %q, got %v", test.message, err)
 			}

@@ -7,7 +7,7 @@ import (
 
 func TestRecorderRedactsAndCopies(t *testing.T) {
 	recorder := NewRecorder("cookie-value", "")
-	recorder.Add("auth", "accepted cookie-value")
+	recorder.add("auth", "accepted cookie-value")
 	records := recorder.Records()
 	if len(records) != 1 || records[0].Message != "accepted "+redactedValue {
 		t.Fatalf("unexpected records: %#v", records)
@@ -25,7 +25,7 @@ func TestRecorderRedactsAndCopies(t *testing.T) {
 
 func TestNilRecorder(t *testing.T) {
 	var recorder *Recorder
-	recorder.Add("ignored", "ignored")
+	recorder.add("ignored", "ignored")
 	if count := recorder.Count("ignored"); count != 0 {
 		t.Fatalf("nil recorder returned count %d", count)
 	}
@@ -36,9 +36,9 @@ func TestNilRecorder(t *testing.T) {
 
 func TestCountingRecorder(t *testing.T) {
 	recorder := NewCountingRecorder()
-	recorder.Add("dtls-data", "first")
-	recorder.Add("dtls-data", "second")
-	recorder.Add("cstp-data", "fallback")
+	recorder.add("dtls-data", "first")
+	recorder.add("dtls-data", "second")
+	recorder.add("cstp-data", "fallback")
 	if count := recorder.Count("dtls-data"); count != 2 {
 		t.Fatalf("unexpected DTLS count: %d", count)
 	}

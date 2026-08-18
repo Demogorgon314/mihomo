@@ -50,7 +50,7 @@ func TestOCServFixture(t *testing.T) {
 	testOCServCoreDriver(t, ctx, fixture.tcpAddress, fixture.udpAddress, fixture.roots)
 	testOCServOutboundDriver(t, ctx, fixture.containerID, fixture.tcpAddress, fixture.udpAddress, fixture.roots, fixture.certificatePEM)
 	for _, capability := range []Capability{CapabilityModernDTLS, CapabilityPacketIPv4} {
-		if err := phase0CapabilityMatrix.Record(Evidence{
+		if err := capabilityMatrix.Record(Evidence{
 			Capability: capability,
 			Scenario:   "username-password-modern-dtls",
 			Driver:     DriverCore,
@@ -672,7 +672,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 		t.Fatal(err)
 	}
 	for _, capability := range []Capability{CapabilityCookieCSTP, CapabilityPacketIPv4, CapabilityCompression} {
-		if err := phase0CapabilityMatrix.Record(Evidence{
+		if err := capabilityMatrix.Record(Evidence{
 			Capability: capability,
 			Scenario:   "cookie-cstp-tcp-udp-echo",
 			Driver:     DriverOutbound,
@@ -684,7 +684,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 			t.Fatal(err)
 		}
 	}
-	if err := phase0CapabilityMatrix.Record(Evidence{
+	if err := capabilityMatrix.Record(Evidence{
 		Capability: CapabilityAuth,
 		Scenario:   "username-password-authgroup",
 		Driver:     DriverOutbound,
@@ -756,7 +756,7 @@ func testOCServDTLSOutbound(t *testing.T, ctx context.Context, tcpAddress string
 		t.Fatalf("unexpected ocserv DTLS UDP echo: %q", udpReply[:count])
 	}
 	_ = udpConnection.Close()
-	if err := phase0CapabilityMatrix.Record(Evidence{
+	if err := capabilityMatrix.Record(Evidence{
 		Capability: CapabilityModernDTLS,
 		Scenario:   "outbound-tcp-udp-modern-dtls",
 		Driver:     DriverOutbound,
