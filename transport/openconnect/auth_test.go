@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
+	testopenconnect "github.com/metacubex/mihomo/internal/testutil/openconnect"
 	openconnect "github.com/sagernet/sing-openconnect"
 )
 
@@ -84,7 +84,7 @@ func TestClientAuthProvidersIsolateConcurrentChallenges(t *testing.T) {
 			}
 			return AuthResponse{FormValues: map[string]string{field.SubmissionKey: answer}}, nil
 		})
-		client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, provider, func(scenario *testanyconnect.Scenario) {
+		client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, provider, func(scenario *testopenconnect.AnyConnectScenario) {
 			scenario.Name = fmt.Sprintf("auth-session-%d", index)
 			scenario.Authentication.Challenge = challengeText
 			scenario.Authentication.ChallengeResponse = answer
@@ -265,7 +265,7 @@ func TestClientAuthGroupSelectProvider(t *testing.T) {
 		}
 		return AuthResponse{FormValues: map[string]string{field.SubmissionKey: "engineering"}}, nil
 	})
-	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, provider, func(scenario *testanyconnect.Scenario) {
+	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, provider, func(scenario *testopenconnect.AnyConnectScenario) {
 		scenario.Authentication.AuthGroup = "engineering"
 		scenario.Authentication.Challenge = ""
 		scenario.Authentication.ChallengeResponse = ""
@@ -291,7 +291,7 @@ func TestClientAutomaticTOTPAndHOTP(t *testing.T) {
 	t.Run("totp", func(t *testing.T) {
 		counter := uint64(time.Now().Unix() / 30)
 		responses := []string{oathCode(secretBytes, counter-1), oathCode(secretBytes, counter), oathCode(secretBytes, counter+1)}
-		client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testanyconnect.Scenario) {
+		client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testopenconnect.AnyConnectScenario) {
 			scenario.Authentication.ChallengeResponses = responses
 			scenario.Authentication.ChallengeResponse = ""
 		}, func(config *Config) {
@@ -312,7 +312,7 @@ func TestClientAutomaticTOTPAndHOTP(t *testing.T) {
 	})
 	t.Run("hotp", func(t *testing.T) {
 		var persisted atomic.Uint64
-		client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testanyconnect.Scenario) {
+		client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testopenconnect.AnyConnectScenario) {
 			scenario.Authentication.ChallengeResponse = oathCode(secretBytes, 7)
 		}, func(config *Config) {
 			config.Username = "phase2-user"
@@ -344,7 +344,7 @@ func TestClientAutomaticTOTPAndHOTP(t *testing.T) {
 }
 
 func TestClientWithoutProviderDisablesExternalAuthentication(t *testing.T) {
-	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testanyconnect.Scenario) {
+	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testopenconnect.AnyConnectScenario) {
 		scenario.Authentication.Browser = true
 		scenario.Authentication.Challenge = ""
 		scenario.Authentication.ChallengeResponse = ""
@@ -368,7 +368,7 @@ func TestClientBrowserRequestEmitsEventWithProvider(t *testing.T) {
 	provider := authProviderFunc(func(context.Context, AuthChallenge) (AuthResponse, error) {
 		return AuthResponse{}, errors.New("stop browser authentication")
 	})
-	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, provider, func(scenario *testanyconnect.Scenario) {
+	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, provider, func(scenario *testopenconnect.AnyConnectScenario) {
 		scenario.Authentication.Browser = true
 		scenario.Authentication.Challenge = ""
 		scenario.Authentication.ChallengeResponse = ""
@@ -396,7 +396,7 @@ func TestClientBrowserRequestEmitsEventWithProvider(t *testing.T) {
 }
 
 func TestClientHostScanIsReportedAndBlockedByPolicy(t *testing.T) {
-	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testanyconnect.Scenario) {
+	client, _, closeGateway := newAuthenticatedTestClientWithScenario(t, nil, func(scenario *testopenconnect.AnyConnectScenario) {
 		scenario.Authentication.HostScan = true
 		scenario.Authentication.Challenge = ""
 		scenario.Authentication.ChallengeResponse = ""
@@ -424,14 +424,14 @@ func TestClientHostScanIsReportedAndBlockedByPolicy(t *testing.T) {
 	}
 }
 
-func newAuthenticatedTestClient(t *testing.T, provider AuthProvider, mutate func(config *Config)) (*Client, testanyconnect.Scenario, func()) {
+func newAuthenticatedTestClient(t *testing.T, provider AuthProvider, mutate func(config *Config)) (*Client, testopenconnect.AnyConnectScenario, func()) {
 	return newAuthenticatedTestClientWithScenario(t, provider, nil, mutate)
 }
 
-func newAuthenticatedTestClientWithScenario(t *testing.T, provider AuthProvider, mutateScenario func(*testanyconnect.Scenario), mutate func(config *Config)) (*Client, testanyconnect.Scenario, func()) {
+func newAuthenticatedTestClientWithScenario(t *testing.T, provider AuthProvider, mutateScenario func(*testopenconnect.AnyConnectScenario), mutate func(config *Config)) (*Client, testopenconnect.AnyConnectScenario, func()) {
 	t.Helper()
-	scenario := testanyconnect.BasicCSTPScenario()
-	scenario.Authentication = testanyconnect.AuthenticationScenario{
+	scenario := testopenconnect.BasicAnyConnectScenario()
+	scenario.Authentication = testopenconnect.AnyConnectAuthenticationScenario{
 		Enabled:           true,
 		Username:          "phase2-user",
 		Password:          "phase2-password",
@@ -441,12 +441,12 @@ func newAuthenticatedTestClientWithScenario(t *testing.T, provider AuthProvider,
 	if mutateScenario != nil {
 		mutateScenario(&scenario)
 	}
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, testanyconnect.NewRecorder(
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, testopenconnect.NewRecorder(
 		scenario.Cookie,
 		scenario.Authentication.Password,
 		scenario.Authentication.ChallengeResponse,
@@ -464,7 +464,7 @@ func newAuthenticatedTestClientWithScenario(t *testing.T, provider AuthProvider,
 	config := Config{
 		Server:               "https://" + gateway.ServerName() + ":" + port,
 		ServerName:           gateway.ServerName(),
-		CertificateAuthority: testanyconnect.RootCAPEM(),
+		CertificateAuthority: testopenconnect.AnyConnectRootCAPEM(),
 	}
 	mutate(&config)
 	client, err := NewClient(ctx, config, new(recordingDialer), provider)

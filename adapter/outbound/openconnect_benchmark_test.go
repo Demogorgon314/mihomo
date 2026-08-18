@@ -16,7 +16,7 @@ import (
 	"time"
 
 	C "github.com/metacubex/mihomo/constant"
-	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
+	testopenconnect "github.com/metacubex/mihomo/internal/testutil/openconnect"
 	oc "github.com/metacubex/mihomo/transport/openconnect"
 )
 
@@ -337,7 +337,7 @@ func openConnectBenchmarkChecksum(content []byte) uint16 {
 	return ^uint16(sum)
 }
 
-func waitAnyConnectBenchmarkRecordCount(ctx context.Context, recorder *testanyconnect.Recorder, kind string, expected uint64) uint64 {
+func waitAnyConnectBenchmarkRecordCount(ctx context.Context, recorder *testopenconnect.Recorder, kind string, expected uint64) uint64 {
 	timer := time.NewTimer(time.Second)
 	defer timer.Stop()
 	for {
@@ -357,19 +357,19 @@ func waitAnyConnectBenchmarkRecordCount(ctx context.Context, recorder *testanyco
 }
 
 type openConnectSingleReplyPeer struct {
-	peer *testanyconnect.TCPUDPEchoPeer
+	peer *testopenconnect.TCPUDPEchoPeer
 }
 
 func (p openConnectSingleReplyPeer) HandlePacket(packet []byte) ([]byte, error) {
 	return p.peer.HandlePacket(packet)
 }
 
-func startAnyConnectE2EBenchmark(b *testing.B) (context.Context, *OpenConnect, *openConnectSession, *testanyconnect.Recorder, netip.Addr) {
+func startAnyConnectE2EBenchmark(b *testing.B) (context.Context, *OpenConnect, *openConnectSession, *testopenconnect.Recorder, netip.Addr) {
 	b.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	b.Cleanup(cancel)
 	peerAddress := netip.MustParseAddr("192.0.2.1")
-	peer, err := testanyconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
+	peer, err := testopenconnect.NewIPv4TCPUDPEchoPeer(ctx, peerAddress, testAnyConnectTCPPort, testAnyConnectUDPPort)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -378,12 +378,12 @@ func startAnyConnectE2EBenchmark(b *testing.B) (context.Context, *OpenConnect, *
 	return ctx, outbound, session, recorder, peerAddress
 }
 
-func startAnyConnectE2EBenchmarkTunnel(b *testing.B, ctx context.Context, peer testanyconnect.PacketPeer) (*OpenConnect, *openConnectSession, *testanyconnect.Recorder) {
+func startAnyConnectE2EBenchmarkTunnel(b *testing.B, ctx context.Context, peer testopenconnect.PacketPeer) (*OpenConnect, *openConnectSession, *testopenconnect.Recorder) {
 	b.Helper()
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.ModernDTLS = true
-	recorder := testanyconnect.NewCountingRecorder()
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, recorder)
+	recorder := testopenconnect.NewCountingRecorder()
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		b.Fatal(err)
 	}

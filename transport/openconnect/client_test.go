@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
+	testopenconnect "github.com/metacubex/mihomo/internal/testutil/openconnect"
 )
 
 type recordingDialer struct {
@@ -41,16 +41,16 @@ func (d *recordingDialer) calls() ([]string, []string) {
 }
 
 func TestClientCookieCSTP(t *testing.T) {
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.Cookie = "opaque-cookie=with=padding"
 	scenario.CSTP.ResponseChunkSize = 1
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestClientCookieCSTP(t *testing.T) {
 		Server:               "https://" + gateway.ServerName() + ":" + port,
 		Cookie:               scenario.Cookie,
 		ServerName:           gateway.ServerName(),
-		CertificateAuthority: testanyconnect.RootCAPEM(),
+		CertificateAuthority: testopenconnect.AnyConnectRootCAPEM(),
 	}, dialer, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestClientCookieCSTP(t *testing.T) {
 	if configurationAgain.Addresses[0] != scenario.Configuration.Addresses[0] {
 		t.Fatalf("network configuration was not caller-owned: %#v", configurationAgain)
 	}
-	request, err := testanyconnect.BuildIPv4ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), netip.MustParseAddr("192.0.2.1"), 1, 1, []byte("facade"))
+	request, err := testopenconnect.BuildIPv4ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), netip.MustParseAddr("192.0.2.1"), 1, 1, []byte("facade"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestClientCookieCSTP(t *testing.T) {
 	if len(networks) == 0 || networks[0] != "tcp" || len(addresses) == 0 || !strings.HasSuffix(addresses[0], ":"+port) {
 		t.Fatalf("protocol bypassed injected underlay: networks=%v addresses=%v", networks, addresses)
 	}
-	pin, err := testanyconnect.ServerSPKISHA256()
+	pin, err := testopenconnect.AnyConnectServerSPKISHA256()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestClientCookieCSTP(t *testing.T) {
 }
 
 func TestClientMobileIdentityMatchesOpenConnectDefaults(t *testing.T) {
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.CSTP.ExpectedRequestHeaders = map[string]string{
 		"User-Agent":                              "OpenConnect mobile test",
 		"X-CSTP-Hostname":                         "mobile-client",
@@ -234,14 +234,14 @@ func TestClientRejectsMissingContextDialerAndInvalidCA(t *testing.T) {
 }
 
 func TestClientRejectsTLSFailures(t *testing.T) {
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestClientRejectsTLSFailures(t *testing.T) {
 		match  string
 	}{
 		{name: "unknown CA", config: Config{Server: "https://" + gateway.ServerName() + ":" + port, Cookie: scenario.Cookie, ServerName: gateway.ServerName(), CertificateAuthority: unrelatedCA}, match: "certificate"},
-		{name: "wrong hostname", config: Config{Server: "https://" + gateway.ServerName() + ":" + port, Cookie: scenario.Cookie, ServerName: "wrong.example", CertificateAuthority: testanyconnect.RootCAPEM()}, match: "wrong.example"},
+		{name: "wrong hostname", config: Config{Server: "https://" + gateway.ServerName() + ":" + port, Cookie: scenario.Cookie, ServerName: "wrong.example", CertificateAuthority: testopenconnect.AnyConnectRootCAPEM()}, match: "wrong.example"},
 		{name: "wrong pin", config: Config{Server: "https://" + gateway.ServerName() + ":" + port, Cookie: scenario.Cookie, ServerName: gateway.ServerName(), PeerFingerprint: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}, match: "fingerprint"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

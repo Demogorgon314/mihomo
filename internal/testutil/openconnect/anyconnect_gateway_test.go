@@ -1,4 +1,4 @@
-package anyconnect
+package openconnect
 
 import (
 	"bufio"
@@ -13,7 +13,7 @@ import (
 )
 
 func TestFakeGatewayCSTPProbe(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	scenario.CSTP.ResponseChunkSize = 1
 	serverAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := NewIPv4ICMPEchoPeer(serverAddress)
@@ -23,7 +23,7 @@ func TestFakeGatewayCSTPProbe(t *testing.T) {
 	recorder := NewRecorder(scenario.Cookie)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	gateway, err := StartGateway(ctx, scenario, peer, recorder)
+	gateway, err := StartAnyConnectGateway(ctx, scenario, peer, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestFakeGatewayCSTPProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := RunCSTPProbe(ctx, ProbeOptions{
+	result, err := RunAnyConnectCSTPProbe(ctx, AnyConnectProbeOptions{
 		Address:    gateway.Address(),
 		ServerName: gateway.ServerName(),
 		RootCAs:    gateway.RootCAs(),
@@ -78,10 +78,10 @@ func TestFakeGatewayCSTPProbe(t *testing.T) {
 }
 
 func TestFakeGatewayModernDTLSProbe(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	scenario.ModernDTLS = true
 	gateway, request, ctx := startProbeTestGateway(t, scenario)
-	result, err := RunDTLSProbe(ctx, DTLSProbeOptions{ProbeOptions: ProbeOptions{
+	result, err := RunAnyConnectDTLSProbe(ctx, AnyConnectDTLSProbeOptions{AnyConnectProbeOptions: AnyConnectProbeOptions{
 		Address:    gateway.Address(),
 		ServerName: gateway.ServerName(),
 		RootCAs:    gateway.RootCAs(),
@@ -108,13 +108,13 @@ func TestFakeGatewayModernDTLSProbe(t *testing.T) {
 }
 
 func TestFakeGatewayModernDTLSRejectsWrongExporterPSK(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	scenario.ModernDTLS = true
 	gateway, request, ctx := startProbeTestGateway(t, scenario)
 	probeContext, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 	defer cancel()
-	_, err := RunDTLSProbe(probeContext, DTLSProbeOptions{
-		ProbeOptions: ProbeOptions{
+	_, err := RunAnyConnectDTLSProbe(probeContext, AnyConnectDTLSProbeOptions{
+		AnyConnectProbeOptions: AnyConnectProbeOptions{
 			Address:    gateway.Address(),
 			ServerName: gateway.ServerName(),
 			RootCAs:    gateway.RootCAs(),
@@ -129,9 +129,9 @@ func TestFakeGatewayModernDTLSRejectsWrongExporterPSK(t *testing.T) {
 }
 
 func TestFakeGatewayRejectsWrongCookie(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	gateway, request, ctx := startProbeTestGateway(t, scenario)
-	_, err := RunCSTPProbe(ctx, ProbeOptions{
+	_, err := RunAnyConnectCSTPProbe(ctx, AnyConnectProbeOptions{
 		Address:    gateway.Address(),
 		ServerName: gateway.ServerName(),
 		RootCAs:    gateway.RootCAs(),
@@ -144,10 +144,10 @@ func TestFakeGatewayRejectsWrongCookie(t *testing.T) {
 }
 
 func TestFakeGatewayConfiguredRejection(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	scenario.CSTP.RejectStatus = 503
 	gateway, request, ctx := startProbeTestGateway(t, scenario)
-	_, err := RunCSTPProbe(ctx, ProbeOptions{
+	_, err := RunAnyConnectCSTPProbe(ctx, AnyConnectProbeOptions{
 		Address:    gateway.Address(),
 		ServerName: gateway.ServerName(),
 		RootCAs:    gateway.RootCAs(),
@@ -160,10 +160,10 @@ func TestFakeGatewayConfiguredRejection(t *testing.T) {
 }
 
 func TestFakeGatewayMalformedFrameIsDetected(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	scenario.CSTP.MalformedDataHeader = true
 	gateway, request, ctx := startProbeTestGateway(t, scenario)
-	_, err := RunCSTPProbe(ctx, ProbeOptions{
+	_, err := RunAnyConnectCSTPProbe(ctx, AnyConnectProbeOptions{
 		Address:    gateway.Address(),
 		ServerName: gateway.ServerName(),
 		RootCAs:    gateway.RootCAs(),
@@ -187,10 +187,10 @@ func TestFakeGatewayMalformedFrameIsDetected(t *testing.T) {
 }
 
 func TestFakeGatewayProbeDetectsCorruptPacket(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	gateway, request, ctx := startProbeTestGateway(t, scenario)
 	request[10] ^= 0xff // Break the IPv4 header checksum after construction.
-	_, err := RunCSTPProbe(ctx, ProbeOptions{
+	_, err := RunAnyConnectCSTPProbe(ctx, AnyConnectProbeOptions{
 		Address:    gateway.Address(),
 		ServerName: gateway.ServerName(),
 		RootCAs:    gateway.RootCAs(),
@@ -217,9 +217,9 @@ func TestFakeGatewayProbeDetectsCorruptPacket(t *testing.T) {
 }
 
 func TestFakeGatewayTLSIsVerified(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	gateway, request, ctx := startProbeTestGateway(t, scenario)
-	_, err := RunCSTPProbe(ctx, ProbeOptions{
+	_, err := RunAnyConnectCSTPProbe(ctx, AnyConnectProbeOptions{
 		Address:    gateway.Address(),
 		ServerName: gateway.ServerName(),
 		RootCAs:    x509.NewCertPool(),
@@ -243,25 +243,25 @@ func TestFakeGatewayTLSIsVerified(t *testing.T) {
 }
 
 func TestRunCSTPProbeValidatesOptions(t *testing.T) {
-	if _, err := RunCSTPProbe(nil, ProbeOptions{}); err == nil || !strings.Contains(err.Error(), "context") {
+	if _, err := RunAnyConnectCSTPProbe(nil, AnyConnectProbeOptions{}); err == nil || !strings.Contains(err.Error(), "context") {
 		t.Fatalf("expected context error, got %v", err)
 	}
-	if _, err := RunCSTPProbe(context.Background(), ProbeOptions{}); err == nil || !strings.Contains(err.Error(), "required") {
+	if _, err := RunAnyConnectCSTPProbe(context.Background(), AnyConnectProbeOptions{}); err == nil || !strings.Contains(err.Error(), "required") {
 		t.Fatalf("expected option error, got %v", err)
 	}
-	if _, err := RunCSTPProbe(context.Background(), ProbeOptions{Address: "unused", ServerName: "unused", RootCAs: x509.NewCertPool(), Cookie: "value\r\ninjected", Packet: []byte{1}}); err == nil || !strings.Contains(err.Error(), "header character") {
+	if _, err := RunAnyConnectCSTPProbe(context.Background(), AnyConnectProbeOptions{Address: "unused", ServerName: "unused", RootCAs: x509.NewCertPool(), Cookie: "value\r\ninjected", Packet: []byte{1}}); err == nil || !strings.Contains(err.Error(), "header character") {
 		t.Fatalf("expected cookie header error, got %v", err)
 	}
 }
 
 func TestFakeGatewayCloseInterruptsActiveConnection(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	serverAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := NewIPv4ICMPEchoPeer(serverAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := StartGateway(context.Background(), scenario, peer, nil)
+	gateway, err := StartAnyConnectGateway(context.Background(), scenario, peer, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,23 +301,23 @@ func TestFakeGatewayCloseInterruptsActiveConnection(t *testing.T) {
 }
 
 func TestStartGatewayValidatesArguments(t *testing.T) {
-	scenario := BasicCSTPScenario()
+	scenario := BasicAnyConnectScenario()
 	peer, err := NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := StartGateway(nil, scenario, peer, nil); err == nil {
+	if _, err := StartAnyConnectGateway(nil, scenario, peer, nil); err == nil {
 		t.Fatal("expected nil context error")
 	}
-	if _, err := StartGateway(context.Background(), Scenario{}, peer, nil); err == nil {
+	if _, err := StartAnyConnectGateway(context.Background(), AnyConnectScenario{}, peer, nil); err == nil {
 		t.Fatal("expected invalid scenario error")
 	}
-	if _, err := StartGateway(context.Background(), scenario, nil, nil); err == nil {
+	if _, err := StartAnyConnectGateway(context.Background(), scenario, nil, nil); err == nil {
 		t.Fatal("expected nil peer error")
 	}
 }
 
-func startProbeTestGateway(t *testing.T, scenario Scenario) (*Gateway, []byte, context.Context) {
+func startProbeTestGateway(t *testing.T, scenario AnyConnectScenario) (*AnyConnectGateway, []byte, context.Context) {
 	t.Helper()
 	serverAddress := netip.MustParseAddr("192.0.2.1")
 	peer, err := NewIPv4ICMPEchoPeer(serverAddress)
@@ -326,7 +326,7 @@ func startProbeTestGateway(t *testing.T, scenario Scenario) (*Gateway, []byte, c
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
-	gateway, err := StartGateway(ctx, scenario, peer, NewRecorder(scenario.Cookie))
+	gateway, err := StartAnyConnectGateway(ctx, scenario, peer, NewRecorder(scenario.Cookie))
 	if err != nil {
 		t.Fatal(err)
 	}

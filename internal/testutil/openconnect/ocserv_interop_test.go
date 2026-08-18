@@ -1,6 +1,6 @@
 //go:build anyconnect_ocserv
 
-package anyconnect
+package openconnect
 
 import (
 	"context"
@@ -28,7 +28,7 @@ import (
 	"github.com/metacubex/mihomo/adapter"
 	C "github.com/metacubex/mihomo/constant"
 
-	openconnect "github.com/sagernet/sing-openconnect"
+	singopenconnect "github.com/sagernet/sing-openconnect"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -55,7 +55,7 @@ func TestOCServFixture(t *testing.T) {
 			Scenario:   "username-password-modern-dtls",
 			Driver:     DriverCore,
 			Gateway:    "ocserv-1.3.0-2",
-			Transport:  openconnect.TransportDTLS,
+			Transport:  singopenconnect.TransportDTLS,
 			Address:    "ipv4",
 			Passed:     true,
 		}); err != nil {
@@ -77,7 +77,7 @@ func BenchmarkOCServAnyConnectDataPlaneE2E(b *testing.B) {
 		// this server-side compatibility switch. The client still rejects DTLS 0.9.
 		dtlsLegacy: true,
 	})
-	cookie, err := RunAuthProbe(ctx, AuthProbeOptions{
+	cookie, err := RunAnyConnectAuthProbe(ctx, AnyConnectAuthProbeOptions{
 		Address:    fixture.tcpAddress,
 		ServerName: fakeGatewayServerName,
 		RootCAs:    fixture.roots,
@@ -493,19 +493,19 @@ func testOCServCoreDriver(t *testing.T, ctx context.Context, tcpAddress string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	configurationEvents := make(chan openconnect.TunnelConfigurationEvent, 1)
-	client, err := openconnect.NewClient(openconnect.ClientOptions{
+	configurationEvents := make(chan singopenconnect.TunnelConfigurationEvent, 1)
+	client, err := singopenconnect.NewClient(singopenconnect.ClientOptions{
 		Context:  ctx,
 		Server:   "https://" + fakeGatewayServerName + ":" + tcpPort,
 		Username: ocservUsername,
 		Password: ocservPassword,
 		Dialer:   &ocservDTLSDialer{udpDestination: M.ParseSocksaddr(udpAddress)},
-		TLSConfig: openconnect.ClientTLSOptions{Config: &tls.Config{
+		TLSConfig: singopenconnect.ClientTLSOptions{Config: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			ServerName: fakeGatewayServerName,
 			RootCAs:    roots,
 		}},
-		OnTunnelConfiguration: func(event openconnect.TunnelConfigurationEvent) error {
+		OnTunnelConfiguration: func(event singopenconnect.TunnelConfigurationEvent) error {
 			select {
 			case configurationEvents <- event:
 			default:
@@ -521,14 +521,14 @@ func testOCServCoreDriver(t *testing.T, ctx context.Context, tcpAddress string, 
 	if err := client.Start(); err != nil {
 		t.Fatal(err)
 	}
-	var configuration openconnect.TunnelConfiguration
+	var configuration singopenconnect.TunnelConfiguration
 	select {
 	case event := <-configurationEvents:
 		configuration = event.Configuration
 	case <-ctx.Done():
 		t.Fatalf("wait for ocserv configuration: %v", ctx.Err())
 	}
-	for client.ActiveTransport() != openconnect.TransportDTLS {
+	for client.ActiveTransport() != singopenconnect.TransportDTLS {
 		select {
 		case <-activeTransportUpdated:
 			activeTransportUpdated = client.ActiveTransportUpdated()
@@ -571,7 +571,7 @@ func testOCServCoreDriver(t *testing.T, ctx context.Context, tcpAddress string, 
 
 func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID string, tcpAddress string, udpAddress string, roots *x509.CertPool, certificatePEM []byte) {
 	t.Helper()
-	cookie, err := RunAuthProbe(ctx, AuthProbeOptions{
+	cookie, err := RunAnyConnectAuthProbe(ctx, AnyConnectAuthProbeOptions{
 		Address:    tcpAddress,
 		ServerName: fakeGatewayServerName,
 		RootCAs:    roots,
@@ -677,7 +677,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 			Scenario:   "cookie-cstp-tcp-udp-echo",
 			Driver:     DriverOutbound,
 			Gateway:    "ocserv-1.3.0-2",
-			Transport:  openconnect.TransportCSTP,
+			Transport:  singopenconnect.TransportCSTP,
 			Address:    "ipv4",
 			Passed:     true,
 		}); err != nil {
@@ -689,7 +689,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 		Scenario:   "username-password-authgroup",
 		Driver:     DriverOutbound,
 		Gateway:    "ocserv-1.3.0-2",
-		Transport:  openconnect.TransportCSTP,
+		Transport:  singopenconnect.TransportCSTP,
 		Address:    "ipv4",
 		Passed:     true,
 	}); err != nil {
@@ -699,7 +699,7 @@ func testOCServOutboundDriver(t *testing.T, ctx context.Context, containerID str
 
 func testOCServDTLSOutbound(t *testing.T, ctx context.Context, tcpAddress string, udpAddress string, port string, roots *x509.CertPool, certificatePEM []byte, target netip.Addr) {
 	t.Helper()
-	cookie, err := RunAuthProbe(ctx, AuthProbeOptions{
+	cookie, err := RunAnyConnectAuthProbe(ctx, AnyConnectAuthProbeOptions{
 		Address:    tcpAddress,
 		ServerName: fakeGatewayServerName,
 		RootCAs:    roots,
@@ -761,7 +761,7 @@ func testOCServDTLSOutbound(t *testing.T, ctx context.Context, tcpAddress string
 		Scenario:   "outbound-tcp-udp-modern-dtls",
 		Driver:     DriverOutbound,
 		Gateway:    "ocserv-1.3.0-2",
-		Transport:  openconnect.TransportDTLS,
+		Transport:  singopenconnect.TransportDTLS,
 		Address:    "ipv4",
 		Passed:     true,
 	}); err != nil {

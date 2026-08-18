@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
 	testopenconnect "github.com/metacubex/mihomo/internal/testutil/openconnect"
 )
 
@@ -15,7 +14,7 @@ func TestClientF5CookiePPPOverTLS(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	scenario := testopenconnect.BasicF5Scenario()
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(scenario.PeerAddress)
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(scenario.PeerAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +55,7 @@ func TestClientF5CookiePPPOverTLS(t *testing.T) {
 	if client.ActiveTransport() != "tls" {
 		t.Fatalf("unexpected F5 active transport: %q", client.ActiveTransport())
 	}
-	request, err := testanyconnect.BuildIPv4ICMPEchoRequest(scenario.ClientAddress, scenario.PeerAddress, 1, 1, []byte("f5-facade"))
+	request, err := testopenconnect.BuildIPv4ICMPEchoRequest(scenario.ClientAddress, scenario.PeerAddress, 1, 1, []byte("f5-facade"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +78,7 @@ func TestClientF5DTLSRequiredRejectsTLSFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	scenario := testopenconnect.BasicF5Scenario()
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(scenario.PeerAddress)
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(scenario.PeerAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +113,7 @@ func TestClientF5CertificateDTLS(t *testing.T) {
 	defer cancel()
 	scenario := testopenconnect.BasicF5Scenario()
 	scenario.DTLS = true
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(scenario.PeerAddress)
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(scenario.PeerAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +150,7 @@ func TestClientF5CertificateDTLS(t *testing.T) {
 	if client.ActiveTransport() != "dtls" || gateway.DTLSConnections() != 1 {
 		t.Fatalf("F5 did not establish certificate DTLS: transport=%q connections=%d", client.ActiveTransport(), gateway.DTLSConnections())
 	}
-	request, err := testanyconnect.BuildIPv4ICMPEchoRequest(scenario.ClientAddress, scenario.PeerAddress, 2, 1, []byte("f5-dtls"))
+	request, err := testopenconnect.BuildIPv4ICMPEchoRequest(scenario.ClientAddress, scenario.PeerAddress, 2, 1, []byte("f5-dtls"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +180,7 @@ func TestClientF5UsernamePassword(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	scenario := testopenconnect.BasicF5Scenario()
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(scenario.PeerAddress)
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(scenario.PeerAddress)
 	if err != nil {
 		t.Fatal(err)
 	}

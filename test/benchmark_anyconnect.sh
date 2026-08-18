@@ -119,7 +119,7 @@ run_phase() {
 			run_benchmark E2E "$repo_dir/adapter/outbound" "$mihomo_mod" '^BenchmarkAnyConnect(DataPlane|TCPDownload)E2E$' with_gvisor "$@"
 			;;
 		docker-e2e)
-			run_benchmark Docker-E2E "$repo_dir/internal/testutil/anyconnect" "$mihomo_mod" '^BenchmarkOCServAnyConnectDataPlaneE2E$' 'with_gvisor anyconnect_ocserv' "$@"
+			run_benchmark Docker-E2E "$repo_dir/internal/testutil/openconnect" "$mihomo_mod" '^BenchmarkOCServAnyConnectDataPlaneE2E$' 'with_gvisor anyconnect_ocserv' "$@"
 			;;
 		*)
 			echo "unknown AnyConnect benchmark phase: $current_phase" >&2

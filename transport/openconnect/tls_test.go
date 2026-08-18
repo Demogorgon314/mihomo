@@ -16,13 +16,13 @@ import (
 	"testing"
 	"time"
 
-	testanyconnect "github.com/metacubex/mihomo/internal/testutil/anyconnect"
+	testopenconnect "github.com/metacubex/mihomo/internal/testutil/openconnect"
 )
 
 func TestClientEncryptedClientCertificate(t *testing.T) {
 	password := "phase2-key-password"
 	caPEM, certificatePEM, encryptedKeyPEM := newClientCertificate(t, password, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	scenario.Authentication.ClientCertificateAuthority = caPEM
 	client, gateway, cancel := newTLSScenarioClient(t, scenario, Config{
 		Cookie:              scenario.Cookie,
@@ -77,7 +77,7 @@ func TestClientRejectsClientCertificateFailuresBeforeDial(t *testing.T) {
 }
 
 func TestClientExplicitSkipCertificateVerify(t *testing.T) {
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	client, gateway, cancel := newTLSScenarioClient(t, scenario, Config{
 		Cookie:         scenario.Cookie,
 		ServerName:     "intentionally-wrong.invalid",
@@ -99,7 +99,7 @@ func TestClientExplicitSkipCertificateVerify(t *testing.T) {
 func TestClientMCAIdentity(t *testing.T) {
 	password := "mca-key-password"
 	_, certificatePEM, encryptedKeyPEM := newClientCertificate(t, password, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
-	scenario := testanyconnect.BasicCSTPScenario()
+	scenario := testopenconnect.BasicAnyConnectScenario()
 	client, gateway, cancel := newTLSScenarioClient(t, scenario, Config{
 		Cookie:         scenario.Cookie,
 		MCACertificate: certificatePEM,
@@ -137,14 +137,14 @@ func TestClientMCAIdentity(t *testing.T) {
 	}
 }
 
-func newTLSScenarioClient(t *testing.T, scenario testanyconnect.Scenario, overrides Config) (*Client, *testanyconnect.Gateway, context.CancelFunc) {
+func newTLSScenarioClient(t *testing.T, scenario testopenconnect.AnyConnectScenario, overrides Config) (*Client, *testopenconnect.AnyConnectGateway, context.CancelFunc) {
 	t.Helper()
-	peer, err := testanyconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
+	peer, err := testopenconnect.NewIPv4ICMPEchoPeer(netip.MustParseAddr("192.0.2.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	gateway, err := testanyconnect.StartGateway(ctx, scenario, peer, nil)
+	gateway, err := testopenconnect.StartAnyConnectGateway(ctx, scenario, peer, nil)
 	if err != nil {
 		cancel()
 		t.Fatal(err)
@@ -161,7 +161,7 @@ func newTLSScenarioClient(t *testing.T, scenario testanyconnect.Scenario, overri
 		config.ServerName = gateway.ServerName()
 	}
 	if len(config.CertificateAuthority) == 0 && !config.SkipCertVerify && config.PeerFingerprint == "" && len(config.PeerFingerprints) == 0 {
-		config.CertificateAuthority = testanyconnect.RootCAPEM()
+		config.CertificateAuthority = testopenconnect.AnyConnectRootCAPEM()
 	}
 	client, err := NewClient(ctx, config, new(recordingDialer), nil)
 	if err != nil {

@@ -155,8 +155,8 @@ with a regression fix.
 For local diagnosis, start with:
 
 ```sh
-go test -race -tags=with_gvisor ./transport/openconnect ./adapter/outbound ./internal/testutil/anyconnect ./internal/testutil/openconnect
-go test -tags=anyconnect_ocserv,with_gvisor ./internal/testutil/anyconnect -run '^TestOCServFixture$' -v
+go test -race -tags=with_gvisor ./transport/openconnect ./adapter/outbound ./internal/testutil/openconnect
+go test -tags=anyconnect_ocserv,with_gvisor ./internal/testutil/openconnect -run '^TestOCServFixture$' -v
 ```
 
 Never attach configuration files, capability artifacts, or logs without first
