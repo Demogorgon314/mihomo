@@ -16,8 +16,6 @@ import (
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
 	oc "github.com/metacubex/mihomo/transport/openconnect"
-
-	wireguard "github.com/metacubex/sing-wireguard"
 )
 
 // Keep outbound DTLS batches deliberately small. Some AnyConnect gateways
@@ -26,7 +24,7 @@ import (
 const openConnectOutboundPacketBatchSize = 2
 
 type openConnectGeneration struct {
-	device          wireguard.Device
+	device          openConnectStack
 	resolver        resolver.Resolver
 	revision        uint64
 	configuration   oc.NetworkConfig
@@ -76,6 +74,7 @@ type openConnectSession struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	name   string
+	stack  string
 
 	resolverFactory func(configuration oc.NetworkConfig) (resolver.Resolver, error)
 
@@ -112,12 +111,14 @@ func newOpenConnectSession(
 	authProvider oc.AuthProvider,
 	resolverFactory func(configuration oc.NetworkConfig) (resolver.Resolver, error),
 	name string,
+	stack string,
 ) (*openConnectSession, error) {
 	sessionCtx, cancel := context.WithCancel(runCtx)
 	session := &openConnectSession{
 		ctx:             sessionCtx,
 		cancel:          cancel,
 		name:            name,
+		stack:           stack,
 		resolverFactory: resolverFactory,
 		initialDone:     make(chan struct{}),
 		done:            make(chan struct{}),
@@ -154,7 +155,7 @@ func newOpenConnectSession(
 		return nil, session.initialErr
 	}
 	configuration := session.configurationSnapshot()
-	log.Debugln("[OpenConnect](%s) tunnel ready: addresses=%v mtu=%d transport=%s", name, configuration.Addresses, configuration.MTU, configuration.ActiveTransport)
+	log.Debugln("[OpenConnect](%s) tunnel ready: addresses=%v mtu=%d transport=%s stack=%s", name, configuration.Addresses, configuration.MTU, configuration.ActiveTransport, stack)
 	return session, nil
 }
 
@@ -195,7 +196,7 @@ func (s *openConnectSession) applyNetworkConfig(event oc.NetworkConfigEvent) err
 		return nil
 	}
 
-	device, err := wireguard.NewStackDevice(configuration.Addresses, configuration.MTU)
+	device, err := newOpenConnectStack(s.stack, configuration.Addresses, configuration.MTU)
 	if err != nil {
 		err = fmt.Errorf("create OpenConnect stack device: %w", err)
 		s.signalInitial(err)
@@ -285,7 +286,7 @@ func (s *openConnectSession) signalInitial(err error) {
 	})
 }
 
-func (s *openConnectSession) currentDevice() (wireguard.Device, resolver.Resolver, error) {
+func (s *openConnectSession) currentDevice() (openConnectStack, resolver.Resolver, error) {
 	s.access.RLock()
 	defer s.access.RUnlock()
 	if s.stopped || s.generation == nil {

@@ -17,6 +17,11 @@ See [`config.yaml`](config.yaml) for every YAML field. Important constraints:
   to `anyconnect`. The former `type: anyconnect` spelling is intentionally not
   accepted.
 - `port` defaults to `443`.
+- `stack` selects the internal TCP/UDP stack: `gvisor` (default, requires a
+  build with `with_gvisor`) or `mips` (experimental, available without that
+  build tag). This is independent of `tun.stack` and applies to both AnyConnect
+  and F5. Changing it requires recreating the outbound; it does not switch
+  existing connections. Neither backend changes the selected VPN transport.
 - `ca`, peer fingerprint(s), and `skip-cert-verify` are mutually exclusive.
   `peer-fingerprints` accepts multiple pins for certificate rotation. System CA
   roots remain enabled with a custom CA unless `system-trust-disabled: true`;

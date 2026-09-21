@@ -34,6 +34,7 @@ func TestF5OutboundTCPAndUDPPPPOverTLS(t *testing.T) {
 	}
 	dialer := new(openConnectRecordingDialer)
 	outbound, err := NewOpenConnect(OpenConnectOption{
+		Stack:        *openConnectTestStack,
 		BasicOption:  BasicOption{DialerForAPI: dialer},
 		Name:         "fake-f5",
 		Protocol:     oc.ProtocolF5,
@@ -112,6 +113,7 @@ func TestF5OutboundCertificateDTLSAndTLSFallback(t *testing.T) {
 	outbound, err := NewOpenConnect(OpenConnectOption{
 		BasicOption:  BasicOption{DialerForAPI: new(openConnectRecordingDialer)},
 		Name:         "fake-f5-dtls",
+		Stack:        *openConnectTestStack,
 		Protocol:     oc.ProtocolF5,
 		Server:       "127.0.0.1",
 		Port:         gateway.Port(),
