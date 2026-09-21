@@ -6,11 +6,100 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
+	"io"
+	"net"
+	"net/http"
 	"net/netip"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
+
+// Fail the reply payload after CONNECT and the CSTP header have been written,
+// reproducing a client disconnect while a reply is in flight without timing races.
+type replyFailureConn struct {
+	net.Conn
+	writes int
+	err    error
+}
+
+func (c *replyFailureConn) Write(p []byte) (int, error) {
+	c.writes++
+	if c.writes == 3 {
+		return 0, c.err
+	}
+	return c.Conn.Write(p)
+}
+
+func TestFakeGatewayClientDisconnectDuringReply(t *testing.T) {
+	unexpected := errors.New("unexpected transport failure")
+	for _, failure := range []error{syscall.EPIPE, syscall.ECONNRESET, unexpected} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			scenario := BasicAnyConnectScenario()
+			address := netip.MustParseAddr("192.0.2.1")
+			peer, err := NewIPv4ICMPEchoPeer(address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gateway, err := StartAnyConnectGateway(context.Background(), scenario, peer, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := gateway.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			server, client := net.Pipe()
+			defer server.Close()
+			defer client.Close()
+			if err := client.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() {
+				done <- gateway.handleConnection(&replyFailureConn{Conn: server, err: &net.OpError{Op: "write", Net: "tcp", Err: failure}})
+			}()
+			request := "CONNECT /CSCOSSLC/tunnel HTTP/1.1\r\nHost: localhost\r\nCookie: webvpn=" + scenario.Cookie + "\r\n\r\n"
+			if _, err := client.Write([]byte(request)); err != nil {
+				t.Fatal(err)
+			}
+			reader := bufio.NewReader(client)
+			response, err := http.ReadResponse(reader, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("CONNECT status: %s", response.Status)
+			}
+			packet, err := BuildIPv4ICMPEchoRequest(scenario.Configuration.Addresses[0].Addr(), address, 1, 1, []byte("close during reply"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writeCSTPFrame(client, cstpPacketData, packet); err != nil {
+				t.Fatal(err)
+			}
+			header := make([]byte, 8)
+			if _, err := io.ReadFull(reader, header); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				if failure == unexpected {
+					if !errors.Is(err, unexpected) {
+						t.Fatalf("lost transport failure: %v", err)
+					}
+				} else if err != nil {
+					t.Fatalf("client disconnect failed gateway: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("gateway did not finish after reply failure")
+			}
+		})
+	}
+}
 
 func TestFakeGatewayCSTPProbe(t *testing.T) {
 	scenario := BasicAnyConnectScenario()

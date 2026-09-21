@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/pion/dtls/v3"
@@ -320,7 +321,16 @@ func (g *AnyConnectGateway) consumeDroppedCSTPConnection(connection net.Conn) bo
 	return dropped
 }
 
-func (g *AnyConnectGateway) handleConnection(connection net.Conn) error {
+func (g *AnyConnectGateway) handleConnection(connection net.Conn) (err error) {
+	defer func() {
+		// A client can close its carrier while the peer is still replying to
+		// queued packets. Treat socket disconnects as normal session completion;
+		// retain protocol errors and other transport failures for Close to report.
+		var networkError *net.OpError
+		if errors.As(err, &networkError) && (errors.Is(networkError, syscall.EPIPE) || errors.Is(networkError, syscall.ECONNRESET)) {
+			err = nil
+		}
+	}()
 	if err := connection.SetDeadline(time.Now().Add(fakeGatewayTimeout)); err != nil {
 		return fmt.Errorf("set fake gateway connection deadline: %w", err)
 	}
