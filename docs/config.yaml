@@ -1439,6 +1439,7 @@ proxies: # socks5
   # openconnect
   - name: "openconnect"
     type: openconnect
+    # stack: gvisor # internal TCP/UDP stack: gvisor (default, requires with_gvisor) or mips
     protocol: anyconnect # anyconnect or f5; omitted defaults to anyconnect
     server: vpn.example.com
     # port: 443 # defaults to 443
