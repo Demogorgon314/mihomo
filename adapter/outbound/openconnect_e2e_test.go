@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -29,6 +30,10 @@ const (
 	testAnyConnectTCPPort = 18080
 	testAnyConnectUDPPort = 15353
 )
+
+// The same gateway, lifecycle tests, and benchmarks exercise either client
+// stack. The peer remains unchanged so backend comparisons isolate the client.
+var openConnectTestStack = flag.String("openconnect-stack", "gvisor", "OpenConnect client stack for integration tests and benchmarks: gvisor or mips")
 
 type openConnectRecordingDialer struct {
 	access       sync.Mutex
@@ -1658,6 +1663,7 @@ func newFakeAnyConnectOutboundWithOption(t testing.TB, gateway *testopenconnect.
 		t.Fatal(err)
 	}
 	option := OpenConnectOption{
+		Stack:            *openConnectTestStack,
 		BasicOption:      BasicOption{DialerForAPI: dialer},
 		Name:             "fake-anyconnect",
 		Protocol:         oc.ProtocolAnyConnect,

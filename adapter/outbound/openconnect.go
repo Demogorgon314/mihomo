@@ -32,6 +32,7 @@ const (
 type OpenConnect struct {
 	*Base
 	config           oc.Config
+	stack            string
 	dns              []dns.NameServer
 	remoteDNSResolve bool
 	handshakeTimeout time.Duration
@@ -56,6 +57,7 @@ type OpenConnectOption struct {
 	BasicOption
 	Name                           string           `proxy:"name"`
 	Protocol                       string           `proxy:"protocol,omitempty"`
+	Stack                          string           `proxy:"stack,omitempty"`
 	Server                         string           `proxy:"server"`
 	Port                           int              `proxy:"port,omitempty"`
 	Cookie                         string           `proxy:"cookie,omitempty"`
@@ -113,6 +115,12 @@ type OpenConnectOption struct {
 }
 
 func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
+	if option.Stack == "" {
+		option.Stack = "gvisor"
+	}
+	if option.Stack != "gvisor" && option.Stack != "mips" {
+		return nil, fmt.Errorf("unsupported openconnect stack %q; expected gvisor or mips", option.Stack)
+	}
 	if strings.TrimSpace(option.Name) == "" {
 		return nil, errors.New("openconnect name is required")
 	}
@@ -251,6 +259,7 @@ func NewOpenConnect(option OpenConnectOption) (*OpenConnect, error) {
 			Prefer:       option.IPVersion,
 		}),
 		config:           config,
+		stack:            option.Stack,
 		remoteDNSResolve: option.RemoteDnsResolve,
 		handshakeTimeout: time.Duration(option.HandshakeTimeout) * time.Second,
 		authProvider:     option.AuthProvider,
@@ -314,7 +323,9 @@ func (o *OpenConnect) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 			remoteResolver = resolver.DefaultResolver
 		}
 		options := o.DialOptions()
-		options = append(options, dialer.WithResolver(remoteResolver), dialer.WithNetDialer(wgNetDialer{tunDevice: device}))
+		options = append(options, dialer.WithResolver(remoteResolver), dialer.WithNetDialer(dialer.NetDialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
+			return device.DialContext(ctx, network, M.ParseSocksaddr(address).Unwrap())
+		})))
 		connection, err = dialer.NewDialer(options...).DialContext(ctx, "tcp", metadata.RemoteAddress())
 	} else {
 		connection, err = device.DialContext(ctx, "tcp", M.SocksaddrFrom(metadata.DstIP, metadata.DstPort).Unwrap())
@@ -487,7 +498,7 @@ func (o *OpenConnect) run(ctx context.Context) (*openConnectSession, error) {
 func (o *OpenConnect) start(starting chan struct{}) {
 	handshakeCtx, cancel := openConnectHandshakeContext(o.runCtx, o.handshakeTimeout)
 	defer cancel()
-	session, err := newOpenConnectSession(o.runCtx, handshakeCtx, o.config, o.dialer, o.authProvider, o.resolverForConfig, o.name)
+	session, err := newOpenConnectSession(o.runCtx, handshakeCtx, o.config, o.dialer, o.authProvider, o.resolverForConfig, o.name, o.stack)
 	o.access.Lock()
 	if err == nil && !o.closed {
 		o.session = session
