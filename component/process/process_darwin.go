@@ -106,7 +106,11 @@ func findProcessName(network string, ip netip.Addr, port int) (uint32, string, e
 		return 0, fallbackUDPProcess, nil
 	}
 
-	return 0, "", ErrNotFound
+	// Not in the list. Some processes get an empty one (only its header and
+	// trailer): on recent macOS, one whose responsible process is not a
+	// shell, such as a core started by a GUI app. Ask libproc instead.
+	path, err := findByLibproc(network, ip, port)
+	return 0, path, err
 }
 
 func getExecPathFromPID(pid uint32) (string, error) {
