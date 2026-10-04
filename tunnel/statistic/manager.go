@@ -35,6 +35,14 @@ type Manager struct {
 	downloadTotal atomic.Int64
 	pid           int32
 	memory        uint64
+	onLeave       atomic.TypedValue[func(*TrackerInfo)]
+}
+
+// OnLeave sets fn to be told of each connection as it closes, with its
+// final byte counts. Embedders use it to account for connections too short
+// to show up in a snapshot.
+func (m *Manager) OnLeave(fn func(*TrackerInfo)) {
+	m.onLeave.Store(fn)
 }
 
 func (m *Manager) Join(c Tracker) {
@@ -42,7 +50,11 @@ func (m *Manager) Join(c Tracker) {
 }
 
 func (m *Manager) Leave(c Tracker) {
-	m.connections.Delete(c.ID())
+	if _, loaded := m.connections.LoadAndDelete(c.ID()); loaded {
+		if fn := m.onLeave.Load(); fn != nil {
+			fn(c.Info())
+		}
+	}
 }
 
 func (m *Manager) Get(id string) (c Tracker) {
