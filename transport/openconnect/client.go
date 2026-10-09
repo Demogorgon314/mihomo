@@ -1,6 +1,7 @@
 package openconnect
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -20,6 +21,9 @@ const (
 	resumptionDTLSCipherSuites = "OC-DTLS1_2-AES256-GCM:OC-DTLS1_2-AES128-GCM"
 	modernDTLS12CipherSuites   = "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-GCM-SHA256"
 	maximumIncomingPacketBatch = 64
+	// openconnect's 32-packet default overflows at gigabit rates: the
+	// protocol readers drop DTLS packets and stall CSTP once it is full.
+	defaultQueueLength = 512
 )
 
 // NetworkConfig is a caller-owned snapshot of the negotiated tunnel settings.
@@ -237,7 +241,7 @@ func NewClient(ctx context.Context, config Config, dialer Dialer, authProvider A
 		PFS:                            config.PFS,
 		MTU:                            config.MTU,
 		BaseMTU:                        config.BaseMTU,
-		QueueLength:                    config.QueueLength,
+		QueueLength:                    cmp.Or(config.QueueLength, defaultQueueLength),
 		DPDInterval:                    config.DPDInterval,
 		ReconnectTimeout:               config.ReconnectTimeout,
 		TLSConfig:                      tlsOptions,
