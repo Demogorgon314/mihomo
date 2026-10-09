@@ -36,13 +36,13 @@ jobs:
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
         with:
           go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
-          go-version: "1.25"
+          go-version: "1.26"
 
       - name: Check out pinned sing-openconnect fork
         uses: actions/checkout@v6
         with:
           repository: Demogorgon314/sing-openconnect
-          ref: a503d88051b35ca24dab16ee535ba974136b28a7
+          ref: be10fe526a2ac351869110c03858f4506f69fdd6
           path: .anyconnect-upstream
 
       - name: Verify hermetic harness
@@ -107,13 +107,13 @@ jobs:
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
         with:
           go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
-          go-version: "1.25"
+          go-version: "1.26"
 
       - name: Check out pinned sing-openconnect fork
         uses: actions/checkout@v6
         with:
           repository: Demogorgon314/sing-openconnect
-          ref: a503d88051b35ca24dab16ee535ba974136b28a7
+          ref: be10fe526a2ac351869110c03858f4506f69fdd6
           path: .anyconnect-upstream
 
       - name: Restore accumulated fuzz corpus
@@ -187,7 +187,7 @@ jobs:
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
         with:
           go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
-          go-version: "1.25"
+          go-version: "1.26"
 
       - name: Run release gate
         run: go test -tags=with_gvisor ./adapter/outbound -run '^${{ matrix.test }}$' -count=1 -timeout=${{ matrix.timeout }}
