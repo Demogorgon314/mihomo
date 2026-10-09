@@ -283,6 +283,12 @@ func (doh *dnsOverHTTPS) shouldRetry(err error) (ok bool) {
 		return true
 	}
 
+	// ResetConnection (on a config reload or an interface change) closes
+	// the client under queries still in flight; a new client answers them.
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+
 	return false
 }
 
